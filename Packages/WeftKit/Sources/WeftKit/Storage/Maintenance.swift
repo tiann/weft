@@ -32,5 +32,8 @@ public enum Maintenance {
             segment.classificationSource = source
         }
         try? modelContext.save()
+
+        // Sessions from before projects, while their folders are still there.
+        Projects.assign(modelContext: modelContext)
     }
 }

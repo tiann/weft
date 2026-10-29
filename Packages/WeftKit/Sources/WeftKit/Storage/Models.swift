@@ -210,6 +210,9 @@ public final class AgentSession {
     public var hapiSessionID: String?
     public var title: String?
     public var projectPath: String?
+    /// The `Project` its folder belongs to, `Project.none` for a folder that isn't one, or nil
+    /// until it's been worked out. Worked out once, while the folder still exists.
+    public var projectKey: String?
     /// The machine it ran on; nil for this Mac.
     public var host: String?
     public var lastActivity: Date
@@ -265,6 +268,56 @@ public final class AgentSpan {
     public var trigger: AgentTrigger { AgentTrigger(rawValue: triggerRaw) ?? .user }
 }
 
+/// What agents worked on: a git repository, wherever it's checked out, or else a folder.
+/// Agent sessions point at it by `key`.
+@Model
+public final class Project {
+    /// For sessions in temporary folders or the home folder.
+    public static let none = "none"
+
+    /// `git:<remote>`, `folder:<path>`, or `folder:<host>:<path>` for another machine.
+    @Attribute(.unique) public var key: String
+    public var name: String
+    /// The repository's main checkout, or the folder; on `host` when that's set.
+    public var path: String
+    /// `github.com/owner/repo`, never with credentials.
+    public var remote: String?
+    /// The machine it's on; nil for this Mac.
+    public var host: String?
+    /// Its color in charts, given once so it stays the same.
+    public var colorSlot: Int
+    public var createdAt: Date
+
+    public init(_ identity: ProjectIdentity, colorSlot: Int) {
+        key = identity.key
+        name = identity.name
+        path = identity.path
+        remote = identity.remote
+        host = identity.host
+        self.colorSlot = colorSlot
+        createdAt = .now
+    }
+}
+
+/// A finished day of the user's activity, added up (`DayRollup`), so reports over months and
+/// years don't read every segment again. `DaySummaries` keeps them up to date.
+@Model
+public final class DaySummary {
+    @Attribute(.unique) public var start: Date
+    public var end: Date
+    /// What it was added up with (`DaySummaries.inputs`); anything else means do it again.
+    public var inputs: String
+    /// The `DayRollup`, as JSON.
+    public var data: Data
+
+    public init(day: DateInterval, inputs: String, data: Data) {
+        start = day.start
+        end = day.end
+        self.inputs = inputs
+        self.data = data
+    }
+}
+
 /// A local/HAPI identity confirmed by the hub. When the HAPI session has imported history,
 /// that history is authoritative, even outside the report's sliding time window.
 @Model
@@ -310,7 +363,7 @@ public enum WeftSchema {
     public static let models: [any PersistentModel.Type] = [
         ActivitySegment.self, CategoryRecord.self, UserRule.self, AIClassificationRecord.self, SessionRecord.self,
         TimeEntrySummary.self, AgentSession.self, AgentSpan.self, AgentLogCursor.self,
-        HAPISessionLink.self,
+        HAPISessionLink.self, Project.self, DaySummary.self,
     ]
 
     public static let folderName = "Weft"

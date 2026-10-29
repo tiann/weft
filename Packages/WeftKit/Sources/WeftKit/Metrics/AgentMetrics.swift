@@ -160,12 +160,19 @@ public enum AgentMetrics {
     public static func waiting(user: [SegmentSample], agents: [AgentSample],
                                categories: [String: CategoryDefinition],
                                config: AgentWaitingConfig = AgentWaitingConfig()) -> [WaitingInterval] {
-        let working = union(agents.map(\.interval))
-        guard !working.isEmpty else { return [] }
+        guard !agents.isEmpty else { return [] }
         let present = union(user.map { DateInterval(start: $0.start, end: max($0.start, $0.end)) })
-
         let distracting = union(user.filter { categories[$0.categoryKey]?.isDistracting == true }
             .map { DateInterval(start: $0.start, end: max($0.start, $0.end)) })
+        return waiting(present: present, distracting: distracting, agents: agents, config: config)
+    }
+
+    /// The same, from when the user was at the Mac and when somewhere distracting, each
+    /// already a `union`, as `DayRollup`s keep them.
+    public static func waiting(present: [DateInterval], distracting: [DateInterval], agents: [AgentSample],
+                               config: AgentWaitingConfig = AgentWaitingConfig()) -> [WaitingInterval] {
+        let working = union(agents.map(\.interval))
+        guard !working.isEmpty else { return [] }
         var result = intersect(distracting, working).map { WaitingInterval($0, kind: .distracting) }
 
         var away: [DateInterval] = []

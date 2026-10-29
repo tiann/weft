@@ -228,6 +228,7 @@ public final class HAPISync {
         }
         // Do not discard the fallback until the authoritative history is safely stored.
         try modelContext.save()
+        Projects.assign(modelContext: modelContext)
         try restoreSourceChoices()
         agents.spansChanged()
         agents.setRemoteLive(Set(imported.filter(\.isWorking).map(\.key)))
@@ -315,7 +316,10 @@ public final class HAPISync {
         session.update(\.flavor, to: imported.flavor)
         session.update(\.hapiSessionID, to: imported.hapiID)
         session.update(\.title, to: imported.title ?? session.title)
-        session.update(\.projectPath, to: imported.projectPath ?? session.projectPath)
+        let path = imported.projectPath ?? session.projectPath
+        // Moved, or reported from another machine than before: work its project out again.
+        if path != session.projectPath || imported.host != session.host { session.projectKey = nil }
+        session.update(\.projectPath, to: path)
         session.update(\.host, to: imported.host)
         if let last { session.update(\.lastActivity, to: max(session.lastActivity, last)) }
     }

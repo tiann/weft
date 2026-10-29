@@ -62,11 +62,28 @@ public final class AgentActivityService {
         await scanTask?.value
     }
 
-    /// Forgets everything read from logs and reads them again, e.g. after changing how turns
-    /// are cut. Waits for a scan in progress, which holds on to the cursors.
+    /// Reads every recent log again from the start, e.g. after changing how turns are cut.
+    /// Spans from logs that aren't read again stay as they are: the agents delete old logs,
+    /// and that history is only kept here. Waits for a scan in progress, which holds on to the
+    /// cursors.
     public func reimport() {
         queuedReset = true
         requestScan()
+    }
+
+    /// Older versions lost the folder of a Codex session first read partway through its log.
+    /// Reads the logs of sessions without one again from the start; their spans come out the same.
+    /// Sessions HAPI owns are left alone: their work comes from HAPI.
+    public func rereadSessionsWithoutFolder() {
+        let hapi = AgentSource.hapi.rawValue
+        let keys = Set(((try? modelContext.fetch(FetchDescriptor<AgentSession>(
+            predicate: #Predicate { $0.projectPath == nil && $0.sourceRaw != hapi }))) ?? []).map(\.key))
+            .subtracting(hapiSessions)
+        guard !keys.isEmpty else { return }
+        for cursor in (try? modelContext.fetch(FetchDescriptor<AgentLogCursor>())) ?? [] {
+            if let key = cursor.sessionKey, keys.contains(key) { modelContext.delete(cursor) }
+        }
+        try? modelContext.save()
     }
 
     // MARK: Reading spans
@@ -207,7 +224,7 @@ public final class AgentActivityService {
             queuedPaths = []
             if queuedReset {
                 queuedReset = false
-                try? modelContext.delete(model: AgentSpan.self, where: #Predicate { $0.fileKey.starts(with: "/") })
+                // A log read from the start replaces all its spans.
                 try? modelContext.delete(model: AgentLogCursor.self)
                 try? modelContext.save()
                 waitingCache = nil
@@ -271,6 +288,7 @@ public final class AgentActivityService {
             }
             if !touchedCodex.isEmpty { nameCodexSessions(touchedCodex) }
             try? modelContext.save()
+            Projects.assign(modelContext: modelContext)
             waitingCache = nil
             isScanning = false
         }

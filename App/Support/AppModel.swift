@@ -43,6 +43,7 @@ final class AppModel {
     let timeEntries: TimeEntryService
     let agents: AgentActivityService
     let hapi: HAPISync
+    let daySummaries: DaySummaries
 
     var page: Page = .today
     /// The day the Today page shows; Reports sets it to drill into a day.
@@ -74,6 +75,7 @@ final class AppModel {
         timeEntries = TimeEntryService(modelContext: context, ai: ai)
         agents = AgentActivityService(modelContext: context, preferences: preferences)
         hapi = HAPISync(modelContext: context, preferences: preferences, agents: agents)
+        daySummaries = DaySummaries(container: container)
         breakReminder = BreakReminder(preferences: preferences, sessions: sessions, notifier: notifier, modelContext: context)
         workHours = WorkHoursMonitor(preferences: preferences, notifier: notifier, modelContext: context)
 
@@ -83,6 +85,7 @@ final class AppModel {
             await refreshNotificationPermission()
         }
         tracker.start()
+        rereadAgentLogsWithoutFolderOnce()
         Task {
             await hapi.start()
             agents.start()
@@ -90,6 +93,21 @@ final class AppModel {
         reaskBrowsingSitesOnce()
         classifier.retryPending()
         describeTimeEntriesPeriodically()
+        addUpRecentDays()
+    }
+
+    /// Adds up the last two months in the background once launch is over, so Reports opens on
+    /// a month and the one before without waiting.
+    private func addUpRecentDays() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard let self else { return }
+            let calendar = Calendar.current
+            let today = calendar.startOfDay(for: .now)
+            let start = calendar.date(byAdding: .day, value: -62, to: today) ?? today
+            _ = daySummaries.rollups(for: ReportPeriod.steps(of: .day, covering: DateInterval(start: start, end: today)),
+                                     categories: classifier.categoryLookup)
+        }
     }
 
     /// The model used to see one title per site, often a login page or a tab that hadn't
@@ -98,6 +116,14 @@ final class AppModel {
         let key = "reaskedBrowsingSitesWithTitles"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         classifier.reaskSites(filedAs: "browsing")
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Older versions lost the folder of some Codex sessions, which projects need.
+    private func rereadAgentLogsWithoutFolderOnce() {
+        let key = "rereadAgentLogsWithoutFolder"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        agents.rereadSessionsWithoutFolder()
         UserDefaults.standard.set(true, forKey: key)
     }
 
@@ -237,6 +263,11 @@ extension AppModel {
     /// agents are turned off.
     func agentSamples(_ spans: [AgentSpan], now: Date = .now) -> [AgentSample] {
         preferences.agentTrackingEnabled ? agents.samples(spans, now: now) : []
+    }
+
+    /// How waiting on agents is counted, or nil if it isn't.
+    var waitingConfig: AgentWaitingConfig? {
+        preferences.countAgentWaiting ? AgentWaitingConfig(idleCap: TimeInterval(preferences.agentWaitingCapMinutes * 60)) : nil
     }
 
     /// When the user waited on agents, or nothing if that isn't counted.

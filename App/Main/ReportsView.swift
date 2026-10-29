@@ -3,210 +3,402 @@ import WeftKit
 import SwiftData
 import SwiftUI
 
+enum ReportTab: String, CaseIterable, Identifiable {
+    case agents, you
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .agents: String(localized: "Agents")
+        case .you: String(localized: "Your time")
+        }
+    }
+}
+
+/// Agent work by project, and the user's own time by category, over a week, a month, a year or
+/// all the history there is. The period stays the same when switching between the two.
 struct ReportsView: View {
-    /// First day of the calendar week shown.
-    @State private var weekStart = ReportsView.week(containing: .now).start
+    @Environment(AppModel.self) private var model
+    @AppStorage("reportsPeriod") private var period: ReportPeriod = .month
+    @AppStorage("reportsTab") private var tab: ReportTab = .agents
+    /// A day in the period shown.
+    @State private var anchor = Date.now
+    @State private var path: [String] = []
 
     var body: some View {
-        let week = ReportsView.week(containing: weekStart)
-        let isCurrent = week.contains(.now)
-        WeekReport(start: week.start)
-            .id(week.start)
-            .navigationTitle("Reports")
-            .navigationSubtitle(rangeLabel(week))
-            .toolbar {
-                ToolbarItemGroup {
-                    Button { shift(-1) } label: { Image(systemName: "chevron.left") }
-                        .help("Previous week")
-                        .keyboardShortcut(.leftArrow, modifiers: .command)
-                    Button("This Week") { weekStart = ReportsView.week(containing: .now).start }
-                        .disabled(isCurrent)
-                    Button { shift(1) } label: { Image(systemName: "chevron.right") }
-                        .help("Next week")
-                        .disabled(isCurrent)
-                        .keyboardShortcut(.rightArrow, modifiers: .command)
-                }
+        NavigationStack(path: $path) {
+            // Without agents there's only the user's own time.
+            let shown = model.preferences.agentTrackingEnabled ? tab : .you
+            ReportContent(period: period, anchor: anchor, tab: $tab, shownTab: shown, open: { path.append($0) }) { month in
+                period = .month
+                anchor = month
             }
-    }
-
-    static func week(containing date: Date) -> DateInterval {
-        Calendar.current.dateInterval(of: .weekOfYear, for: date)
-            ?? DateInterval(start: Calendar.current.startOfDay(for: date), duration: 7 * 86400)
-    }
-
-    private func rangeLabel(_ week: DateInterval) -> String {
-        let last = week.end.addingTimeInterval(-1)
-        return "\(week.start.formatted(.dateTime.month().day())) – \(last.formatted(.dateTime.month().day().year()))"
-    }
-
-    private func shift(_ weeks: Int) {
-        weekStart = Calendar.current.date(byAdding: .weekOfYear, value: weeks, to: weekStart) ?? weekStart
+            .id("\(shown.rawValue)-\(period.rawValue)-\(period.interval(containing: anchor).start.timeIntervalSince1970)")
+            .navigationDestination(for: String.self) { ProjectDetail(key: $0) }
+            .toolbar { PeriodToolbar(period: $period, anchor: $anchor) }
+        }
+        // Agents on other machines only show up when asked for.
+        .task { model.hapi.requestSync() }
     }
 }
 
-private struct DayStat: Identifiable {
-    var day: Date
-    var metrics: DayMetrics
-    var id: Date { day }
-}
-
-private struct DayCategory: Identifiable {
-    var day: Date
-    var category: String
-    var hours: Double
-    var id: String { "\(day.timeIntervalSince1970)-\(category)" }
-}
-
-private struct WeekReport: View {
+private struct ReportContent: View {
     @Environment(AppModel.self) private var model
     @Environment(\.liveness) private var liveness
-    @Query private var segments: [ActivitySegment]
-    @Query private var agentSpans: [AgentSpan]
-    private let days: [Date]
+    @Query private var spans: [AgentSpan]
+    /// The first agent work there is. Agents keep only recent logs, so their history starts
+    /// partway through some period, which can't be compared with.
+    @Query private var earliestSpan: [AgentSpan]
+    @Query private var sessions: [AgentSession]
+    @Query private var projects: [Project]
+    /// Only so the page follows the day still going; the days come from `DaySummaries`.
+    @Query private var today: [ActivitySegment]
+    @State private var shown = Memo<Report>()
+    let period: ReportPeriod
+    @Binding var tab: ReportTab
+    /// What's worked out and shown.
+    let shownTab: ReportTab
+    /// Opens a project.
+    let open: (String) -> Void
+    /// Shows the month starting then.
+    let drill: (Date) -> Void
+    private let base: DateInterval
+    private let previous: DateInterval?
 
-    @State private var hoveredDay: Date?
-    /// Shown unchanged while not live (see `Liveness`).
-    @State private var shown = Memo<(stats: [DayStat], summary: PeriodSummary, last: PeriodSummary)>()
-
-    /// Categories beyond this many share one grey "Other" in the chart.
-    private let chartCategories = 5
+    /// Projects or categories beyond this many share one grey "Other" in a chart.
+    private let chartSeries = 5
     private static let otherKey = "__other"
     private static let waitingKey = "__waiting"
 
-    /// Includes the week before, to compare against.
-    init(start: Date) {
+    init(period: ReportPeriod, anchor: Date, tab: Binding<ReportTab>, shownTab: ReportTab,
+         open: @escaping (String) -> Void, drill: @escaping (Date) -> Void) {
+        self.period = period
+        _tab = tab
+        self.shownTab = shownTab
+        self.open = open
+        self.drill = drill
+        base = period.interval(containing: anchor)
+        previous = period.previous(base)
+        var first = FetchDescriptor<AgentSpan>(sortBy: [SortDescriptor(\.start)])
+        first.fetchLimit = 1
+        _earliestSpan = Query(first)
+        if period == .all {
+            _spans = Query()
+        } else {
+            // The period before too, to compare with, and the day before that, for waiting
+            // just after midnight.
+            let from = (previous?.start ?? base.start).addingTimeInterval(-86400)
+            let end = base.end
+            _spans = Query(filter: #Predicate<AgentSpan> { $0.end > from && $0.start < end })
+        }
+        let now = Date.now
+        let liveFrom = base.end > now ? Calendar.current.startOfDay(for: now) : Date.distantFuture
+        _today = Query(filter: #Predicate<ActivitySegment> { $0.end > liveFrom })
+    }
+
+    private struct Report {
+        var interval: DateInterval
+        var buckets: [DateInterval]
+        /// Only the tab shown is worked out.
+        var agents: Agents?
+        var you: You?
+    }
+
+    private struct Agents {
+        /// Named projects, most time first, then sessions without one.
+        var rows: [ProjectSummary]
+        var previous: [String: TimeInterval]
+        /// Nil when there's nothing to compare with.
+        var previousWallTime: TimeInterval?
+        var wallTime: TimeInterval
+        var sessions: Int
+        var turns: Int
+        var bars: [StackedBarChart.Bar]
+        var keys: [String]
+        var slots: [String: Int]
+        var names: [String: String]
+        var projects: [String: Project]
+
+        func name(_ key: String) -> String { names[key] ?? ProjectStyle.name(key, projects[key]) }
+
+        func color(_ key: String) -> Color {
+            switch key {
+            case Project.none: ProjectStyle.noneColor
+            default: slots[key].map(ProjectStyle.color(slot:)) ?? ProjectStyle.otherColor
+            }
+        }
+    }
+
+    private struct You {
+        var summary: PeriodSummary
+        /// Nil when there's nothing to compare with.
+        var last: PeriodSummary?
+        /// Short days aren't graded yet, as on the score ring.
+        var isEarly: Bool
+        var bars: [StackedBarChart.Bar]
+        var keys: [String]
+        var scores: [(start: Date, score: Int?)]
+        /// Days still being added up.
+        var pending: Int
+    }
+
+    private func makeReport() -> Report {
+        // Follow days as they're added up.
+        _ = model.daySummaries.generation
         let calendar = Calendar.current
-        days = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
-        let from = calendar.date(byAdding: .day, value: -7, to: start) ?? start
-        let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
-        _segments = Query(filter: #Predicate<ActivitySegment> { $0.end > from && $0.start < end }, sort: \.start)
-        _agentSpans = Query(filter: #Predicate<AgentSpan> { $0.end > from && $0.start < end })
+        let now = Date.now
+        let samples = model.agentSamples(spans, now: now)
+        let firstSpan = earliestSpan.first?.start
+        let firstActivity = model.daySummaries.firstActivity()
+        let interval = period == .all
+            ? period.interval(containing: now, first: [firstSpan, firstActivity].compactMap { $0 }.min())
+            : base
+        // A short history still gets a year of months, so its bars look like a year's.
+        let yearBack = calendar.date(byAdding: .month, value: -11, to: ReportPeriod.month.interval(containing: now).start)
+        let chart = period == .all ? DateInterval(start: min(interval.start, yearBack ?? interval.start), end: interval.end) : interval
+        let buckets = period.buckets(chart)
+        // Only compare with a period that history covers from its start.
+        func comparable(since first: Date?) -> DateInterval? {
+            guard let previous, let first, first < previous.start else { return nil }
+            return previous
+        }
+        return Report(interval: interval, buckets: buckets,
+                      agents: shownTab == .agents
+                          ? agents(samples, in: interval, previous: comparable(since: firstSpan), buckets: buckets) : nil,
+                      you: shownTab == .you
+                          ? you(samples, in: interval, previous: comparable(since: firstActivity), buckets: buckets,
+                                first: firstActivity, now: now) : nil)
+    }
+
+    private func agents(_ samples: [AgentSample], in interval: DateInterval, previous: DateInterval?,
+                        buckets: [DateInterval]) -> Agents {
+        let projectKeys = Dictionary(sessions.map { ($0.key, $0.projectKey ?? Project.none) }, uniquingKeysWith: { first, _ in first })
+        let project = { (session: String) in projectKeys[session] ?? Project.none }
+        let current = samples.compactMap { $0.clipped(to: interval) }
+        let summaries = ProjectMetrics.summaries(current, project: project)
+
+        var before: [String: TimeInterval] = [:]
+        var previousWallTime: TimeInterval?
+        if let previous {
+            let samples = samples.compactMap { $0.clipped(to: previous) }
+            let wall = AgentMetrics.wallTime(samples)
+            if wall > 0 {
+                previousWallTime = wall
+                for summary in ProjectMetrics.summaries(samples, project: project) { before[summary.key] = summary.time }
+            }
+        }
+
+        let byKey = Dictionary(projects.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let named = summaries.filter { $0.key != Project.none }
+        let top = Array(named.prefix(named.count > chartSeries + 1 ? chartSeries : named.count)).map(\.key)
+        let keys = top + (named.count > top.count ? [Self.otherKey] : [])
+            + (summaries.contains { $0.key == Project.none } ? [Project.none] : [])
+        var bars: [StackedBarChart.Bar] = []
+        for (bucket, times) in zip(buckets, ProjectMetrics.time(current, by: { project($0.sessionKey) }, in: buckets)) {
+            var stacked: [String: TimeInterval] = [:]
+            for (key, time) in times {
+                stacked[top.contains(key) || key == Project.none ? key : Self.otherKey, default: 0] += time
+            }
+            bars += keys.compactMap { key in stacked[key].map { StackedBarChart.Bar(start: bucket.start, key: key, value: $0) } }
+        }
+        var names = ProjectStyle.names(summaries.map(\.key), projects: byKey)
+        names[Self.otherKey] = String(localized: "Other")
+        return Agents(rows: named + summaries.filter { $0.key == Project.none }, previous: before,
+                      previousWallTime: previousWallTime, wallTime: AgentMetrics.wallTime(current),
+                      sessions: Set(current.map(\.sessionKey)).count,
+                      turns: Set(current.filter { !$0.isSubagent }.map(\.turnID)).count,
+                      bars: bars, keys: keys, slots: ProjectStyle.slots(top.compactMap { byKey[$0] }), names: names,
+                      projects: byKey)
+    }
+
+    private func you(_ agents: [AgentSample], in interval: DateInterval, previous: DateInterval?, buckets: [DateInterval],
+                     first: Date?, now: Date) -> You {
+        let calendar = Calendar.current
+        // Every day with any chance of activity, from the day before the first, for waiting
+        // just after midnight, up to today.
+        var wanted: [DateInterval] = []
+        if let first {
+            let start = max(previous?.start ?? interval.start, calendar.startOfDay(for: first))
+            let lookback = calendar.date(byAdding: .day, value: -1, to: start) ?? start
+            let end = min(interval.end, calendar.dateInterval(of: .day, for: now)?.end ?? interval.end)
+            if lookback < end { wanted = ReportPeriod.steps(of: .day, covering: DateInterval(start: lookback, end: end)) }
+        }
+        let rollups = model.daySummaries.rollups(for: wanted, categories: model.classifier.categoryLookup, now: now)
+        let ready = wanted.compactMap { day in rollups[day.start].map { (day: day, rollup: $0) } }
+        let starts = ready.map(\.day.start)
+        let daily: [(start: Date, metrics: DayMetrics)] = Array(zip(starts, DayRollup.daily(ready, agents: agents, waiting: model.waitingConfig)))
+        func days(in interval: DateInterval) -> [DayMetrics] {
+            daily.filter { $0.start >= interval.start && $0.start < interval.end }.map(\.metrics)
+        }
+
+        let current = days(in: interval)
+        let summary = PeriodSummary(current)
+        var last: PeriodSummary?
+        if let previous {
+            let before = PeriodSummary(days(in: previous))
+            if before.activeDays > 0 { last = before }
+        }
+        let ranked = summary.total.byCategory.sorted { $0.value > $1.value }.map(\.key)
+        let shown = Array(ranked.prefix(ranked.count > chartSeries + 1 ? chartSeries : ranked.count))
+        let keys = shown + (ranked.count > shown.count ? [Self.otherKey] : [])
+            + (summary.total.agentWaitingIdle > 0 ? [Self.waitingKey] : [])
+        var bars: [StackedBarChart.Bar] = []
+        var scores: [(start: Date, score: Int?)] = []
+        for bucket in buckets {
+            let total = PeriodSummary(days(in: bucket))
+            var stacked: [String: TimeInterval] = [:]
+            for (key, value) in total.total.byCategory { stacked[shown.contains(key) ? key : Self.otherKey, default: 0] += value }
+            // Distracted waiting is already in its category; only time away is added.
+            if total.total.agentWaitingIdle > 0 { stacked[Self.waitingKey] = total.total.agentWaitingIdle }
+            bars += keys.compactMap { key in stacked[key].map { StackedBarChart.Bar(start: bucket.start, key: key, value: $0) } }
+            scores.append((bucket.start, total.averageScore))
+        }
+        let isEarly = current.allSatisfy { $0.score == nil || $0.activeTime < 2 * 3600 }
+        let pending = wanted.count - ready.count
+        return You(summary: summary, last: last, isEarly: isEarly, bars: bars, keys: keys, scores: scores, pending: pending)
     }
 
     var body: some View {
-        let (stats, summary, last) = shown.value(liveness) {
-            let stats = dailyStats(days)
-            let last = dailyStats(days.compactMap { Calendar.current.date(byAdding: .day, value: -7, to: $0) })
-            return (stats, PeriodSummary(stats.map(\.metrics)), PeriodSummary(last.map(\.metrics)))
+        let report = shown.value(liveness, makeReport)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 8) {
+                    if model.preferences.agentTrackingEnabled {
+                        Picker("View", selection: $tab) {
+                            ForEach(ReportTab.allCases) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    if let pending = report.you?.pending, pending > 0 {
+                        ProgressView().controlSize(.small).padding(.leading, 4)
+                        Text("Adding up \(pending) days…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let agents = report.agents {
+                    if agents.rows.isEmpty {
+                        ContentUnavailableView("No agent work", systemImage: "folder",
+                                               description: Text("No coding agent worked in this period."))
+                            .frame(maxWidth: .infinity, minHeight: 400)
+                    } else {
+                        agentSection(agents, report)
+                    }
+                }
+                if let you = report.you {
+                    if you.summary.total.activeTime == 0, you.pending == 0 {
+                        ContentUnavailableView("No activity", systemImage: "chart.bar",
+                                               description: Text("Nothing was tracked in this period."))
+                            .frame(maxWidth: .infinity, minHeight: 400)
+                    } else {
+                        youSection(you, report)
+                    }
+                }
+            }
+            .padding(20)
         }
-        let total = summary.total
-        let average = summary.averageScore
-        // Matches the score ring: short days aren't graded yet.
-        let isEarly = stats.allSatisfy { $0.metrics.score == nil || $0.metrics.activeTime < 2 * 3600 }
+        .navigationTitle("Reports")
+        .navigationSubtitle(period.label(report.interval))
+    }
+
+    /// Clicking a month opens it; a day only when there's a day to open.
+    private func opener(days: ((Date) -> Void)?) -> ((Date) -> Void)? {
+        period.bucketUnit == .day ? days : drill
+    }
+
+    // MARK: Agents
+
+    private func agentSection(_ agents: Agents, _ report: Report) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                StatTile(title: "Agent time", value: Format.duration(agents.wallTime),
+                         change: agents.previousWallTime.map {
+                             ChangeLabel(change: Change(agents.wallTime, baseline: $0), help: period.comparison)
+                         },
+                         detail: String(localized: "At least one agent working"))
+                let named = agents.rows.filter { $0.key != Project.none }
+                StatTile(title: "Projects", value: "\(named.count)",
+                         detail: named.first.map { String(localized: "Most: \(agents.name($0.key))") } ?? String(localized: "None yet"))
+                StatTile(title: "Agent sessions", value: "\(agents.sessions)",
+                         detail: agents.turns == 1 ? String(localized: "1 prompt") : String(localized: "\(agents.turns) prompts"))
+            }
+            Card("Time by project") {
+                StackedBarChart(bars: agents.bars, keys: agents.keys, buckets: report.buckets, unit: period.bucketUnit,
+                                name: agents.name, color: agents.color, open: opener(days: nil))
+            }
+            Card("Projects") {
+                VStack(alignment: .leading, spacing: 6) {
+                    let longest = agents.rows.map(\.time).max() ?? 1
+                    ForEach(agents.rows) { summary in
+                        Button { open(summary.key) } label: {
+                            ProjectRow(summary: summary, name: agents.name(summary.key), project: agents.projects[summary.key],
+                                       longest: longest, color: agents.color(summary.key),
+                                       // A project new in this period has nothing to compare with.
+                                       change: agents.previousWallTime == nil ? nil
+                                           : agents.previous[summary.key].map { Change(summary.time, baseline: $0) },
+                                       comparison: period.comparison)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("A project is the git repository an agent worked in, wherever it's checked out, or else its folder. Time counts while at least one of its sessions was working, so sessions in parallel count once.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                }
+            }
+        }
+    }
+
+    // MARK: Your time
+
+    private func youSection(_ you: You, _ report: Report) -> some View {
+        let total = you.summary.total
+        let average = you.summary.averageScore
         let trackedDetail = total.agentWaitingIdle > 0
             ? String(localized: "incl. \(Format.duration(total.agentWaitingIdle)) away while agents worked")
-            : summary.activeDays == 1 ? String(localized: "\(Format.duration(total.activeTime)) a day over 1 day") : String(localized: "\(Format.duration(total.activeTime / Double(max(summary.activeDays, 1)))) a day over \(summary.activeDays) days")
-        // Only compare with a week that was tracked at all.
+            : you.summary.activeDays == 1 ? String(localized: "\(Format.duration(total.activeTime)) a day over 1 day")
+            : String(localized: "\(Format.duration(total.activeTime / Double(max(you.summary.activeDays, 1)))) a day over \(you.summary.activeDays) days")
         let change = { (value: KeyPath<DayMetrics, TimeInterval>) -> Change? in
-            last.activeDays > 0 ? Change(total[keyPath: value], baseline: last.total[keyPath: value]) : nil
+            you.last.map { Change(total[keyPath: value], baseline: $0.total[keyPath: value]) }
         }
-
-        ScrollView {
-            if total.activeTime == 0 {
-                ContentUnavailableView("No activity this week", systemImage: "chart.bar",
-                                       description: Text("Nothing was tracked between these dates."))
-                    .frame(maxWidth: .infinity, minHeight: 400)
-            } else {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(spacing: 12) {
-                        summaryTile("Tracked", total.trackedTime, change: change(\.trackedTime), trackedDetail)
-                        summaryTile("Focus", total.focusTime, change: change(\.focusTime), String(localized: "\(Format.duration(total.deepWorkTime)) deep work"))
-                        summaryTile("Meetings", total.meetingTime, change: change(\.meetingTime), higherIsBetter: false,
-                                    share(total.meetingTime, of: total.activeTime))
-                        summaryTile("Distracted", total.distractingTime, change: change(\.distractingTime), higherIsBetter: false,
-                                    share(total.distractingTime, of: total.activeTime))
-                        tile("Avg. Focus Score", average.map(String.init) ?? "–", isEmpty: average == nil,
-                             change: average.flatMap { now in last.averageScore.map { ChangeLabel(change: Change(Double(now), baseline: Double($0)), unit: .points, help: String(localized: "vs. last week")) } },
-                             average.map { isEarly ? String(localized: "Early estimate") : FocusScore.label(for: $0) } ?? String(localized: "No score yet"))
-                    }
-                    Card("Time by category") { categoryChart(stats, total: total) }
-                    Card("Focus Score") { scoreChart(stats) }
-                    Card("Categories this week") { CategoryBreakdown(metrics: total) }
-                }
-                .padding(20)
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                tile("Tracked", total.trackedTime, change: change(\.trackedTime), trackedDetail)
+                tile("Focus", total.focusTime, change: change(\.focusTime), String(localized: "\(Format.duration(total.deepWorkTime)) deep work"))
+                tile("Meetings", total.meetingTime, change: change(\.meetingTime), higherIsBetter: false,
+                     share(total.meetingTime, of: total.activeTime))
+                tile("Distracted", total.distractingTime, change: change(\.distractingTime), higherIsBetter: false,
+                     share(total.distractingTime, of: total.activeTime))
+                StatTile(title: "Avg. Focus Score", value: average.map(String.init) ?? "–", isEmpty: average == nil,
+                         change: average.flatMap { now in
+                             you.last?.averageScore.map {
+                                 ChangeLabel(change: Change(Double(now), baseline: Double($0)), unit: .points, help: period.comparison)
+                             }
+                         },
+                         detail: average.map { you.isEarly ? String(localized: "Early estimate") : FocusScore.label(for: $0) }
+                            ?? String(localized: "No score yet"))
             }
+            Card("Time by category") {
+                StackedBarChart(bars: you.bars, keys: you.keys, buckets: report.buckets, unit: period.bucketUnit,
+                                name: name, color: color,
+                                target: period.bucketUnit == .day ? model.preferences.workHoursTarget * 3600 : nil,
+                                open: opener { model.showDay($0) })
+            }
+            Card("Focus Score") { ScoreChart(points: you.scores, buckets: report.buckets, unit: period.bucketUnit) }
+            Card("Categories") { CategoryBreakdown(metrics: total) }
         }
     }
 
-    private func dailyStats(_ days: [Date]) -> [DayStat] {
-        let calendar = Calendar.current
-        let intervals = days.map { DateInterval(start: $0, end: calendar.date(byAdding: .day, value: 1, to: $0) ?? $0) }
-        let samples = segments.map(SegmentSample.init)
-        let waiting = model.waiting(user: samples, agents: model.agentSamples(agentSpans))
-        let metrics = DayMetrics.daily(samples, waiting: waiting, days: intervals,
-                                       categories: model.classifier.categoryLookup)
-        return zip(days, metrics).map { DayStat(day: $0, metrics: $1) }
+    private func tile(_ title: LocalizedStringKey, _ value: TimeInterval, change: Change?, higherIsBetter: Bool = true,
+                      _ detail: String) -> some View {
+        StatTile(title: title, value: Format.duration(value), isEmpty: value == 0,
+                 change: change.map { ChangeLabel(change: $0, higherIsBetter: higherIsBetter, help: period.comparison) },
+                 detail: detail)
     }
 
-    private func categoryChart(_ stats: [DayStat], total: DayMetrics) -> some View {
-        // Biggest first, so the bars stack the same way every day and the legend reads in order.
-        let ranked = total.byCategory.sorted { $0.value > $1.value }.map(\.key)
-        let shown = Array(ranked.prefix(ranked.count > chartCategories + 1 ? chartCategories : ranked.count))
-        let hasWaiting = stats.contains { $0.metrics.agentWaitingIdle > 0 }
-        let keys = shown + (ranked.count > shown.count ? [Self.otherKey] : []) + (hasWaiting ? [Self.waitingKey] : [])
-        let rows = stats.flatMap { stat in
-            var hours: [String: Double] = [:]
-            for (key, value) in stat.metrics.byCategory {
-                hours[shown.contains(key) ? key : Self.otherKey, default: 0] += value / 3600
-            }
-            // Distracted waiting is already in its category; only time away is added.
-            if stat.metrics.agentWaitingIdle > 0 { hours[Self.waitingKey] = stat.metrics.agentWaitingIdle / 3600 }
-            return keys.compactMap { key in hours[key].map { DayCategory(day: stat.day, category: key, hours: $0) } }
-        }
-        let target = model.preferences.workHoursTarget
-        return Chart {
-            ForEach(rows) { row in
-                BarMark(x: .value("Day", row.day, unit: .day), y: .value("Hours", row.hours))
-                    .foregroundStyle(by: .value("Category", name(row.category)))
-            }
-            if let hoveredDay, let stat = stats.first(where: { $0.day == hoveredDay }) {
-                RectangleMark(x: .value("Day", hoveredDay, unit: .day))
-                    .foregroundStyle(Color.primary.opacity(0.06))
-                    .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        VStack(spacing: 1) {
-                            Text(Format.duration(stat.metrics.trackedTime)).fontWeight(.semibold).monospacedDigit()
-                            Text(stat.metrics.activeTime > 0 ? "Click to open" : "No activity").foregroundStyle(.secondary)
-                        }
-                        .font(.caption2)
-                    }
-            }
-            if target > 0 {
-                RuleMark(y: .value("Target", target))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundStyle(Color.secondary)
-                    .annotation(position: .top, alignment: .trailing) {
-                        Text("Target \(Format.duration(target * 3600))").font(.caption2).foregroundStyle(.secondary)
-                    }
-            }
-        }
-        .chartForegroundStyleScale(domain: keys.map(name), range: keys.map(color))
-        .chartXScale(domain: weekDomain)
-        .chartXAxis {
-            AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.abbreviated).day(), centered: true) }
-        }
-        .chartYAxisLabel("hours")
-        .chartOverlay { proxy in
-            GeometryReader { geometry in
-                Rectangle().fill(.clear).contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location): hoveredDay = day(at: location, proxy, geometry)
-                        case .ended: hoveredDay = nil
-                        }
-                    }
-                    .onTapGesture { location in
-                        if let day = day(at: location, proxy, geometry) { model.showDay(day) }
-                    }
-            }
-        }
-        .frame(height: 240)
-    }
-
-    private func day(at location: CGPoint, _ proxy: ChartProxy, _ geometry: GeometryProxy) -> Date? {
-        guard let frame = proxy.plotFrame.map({ geometry[$0] }),
-              let date: Date = proxy.value(atX: location.x - frame.origin.x) else { return nil }
-        let day = Calendar.current.startOfDay(for: date)
-        return days.contains(day) ? day : nil
+    private func share(_ value: TimeInterval, of total: TimeInterval) -> String {
+        value == 0 ? String(localized: "None") : String(localized: "\(Format.percent(value / max(total, 1))) of tracked time")
     }
 
     private func name(_ key: String) -> String {
@@ -223,62 +415,5 @@ private struct WeekReport: View {
         case Self.waitingKey: GoalBar.waitingColor.opacity(0.6)
         default: model.classifier.category(key).color
         }
-    }
-
-    private func scoreChart(_ stats: [DayStat]) -> some View {
-        // Only consecutive days are joined, so a gap doesn't read as a trend.
-        var run = 0
-        var points: [(stat: DayStat, run: Int)] = []
-        for stat in stats {
-            if stat.metrics.score == nil { run += 1 } else { points.append((stat, run)) }
-        }
-        return Chart(points, id: \.stat.id) { point in
-            let value = point.stat.metrics.score?.value ?? 0
-            LineMark(x: .value("Day", point.stat.day, unit: .day), y: .value("Score", value))
-                .foregroundStyle(by: .value("Run", point.run))
-            PointMark(x: .value("Day", point.stat.day, unit: .day), y: .value("Score", value))
-                .foregroundStyle(by: .value("Run", point.run))
-                .annotation(position: .top) { Text("\(value)").font(.caption2) }
-        }
-        .chartForegroundStyleScale(range: [Color.accentColor])
-        .chartLegend(.hidden)
-        .chartXScale(domain: weekDomain)
-        .chartXAxis {
-            AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.abbreviated).day(), centered: true) }
-        }
-        .chartYScale(domain: 0...100)
-        .frame(height: 140)
-    }
-
-    /// Always show all seven days, even when only one has data.
-    private var weekDomain: ClosedRange<Date> {
-        let start = days.first ?? .now
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: days.last ?? start) ?? start
-        return start...end
-    }
-
-    private func share(_ value: TimeInterval, of total: TimeInterval) -> String {
-        value == 0 ? String(localized: "None") : String(localized: "\(Format.percent(value / max(total, 1))) of tracked time")
-    }
-
-    private func summaryTile(_ title: LocalizedStringKey, _ value: TimeInterval, change: Change?, higherIsBetter: Bool = true,
-                             _ detail: String) -> some View {
-        tile(title, Format.duration(value), isEmpty: value == 0,
-             change: change.map { ChangeLabel(change: $0, higherIsBetter: higherIsBetter, help: String(localized: "vs. last week")) }, detail)
-    }
-
-    private func tile(_ title: LocalizedStringKey, _ value: String, isEmpty: Bool, change: ChangeLabel?, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(value).font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(isEmpty ? .tertiary : .primary)
-                change
-            }
-            Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(.background.secondary))
     }
 }

@@ -21,6 +21,8 @@ struct AgentStoreHarness {
         let preferences = Preferences(defaults: UserDefaults(suiteName: "weft-store-harness-\(UUID().uuidString)")!)
         let service = AgentActivityService(modelContext: context, preferences: preferences)
         let clock = ContinuousClock()
+        // As the app does once, for sessions older versions left without a folder.
+        service.rereadSessionsWithoutFolder()
         let elapsed = await clock.measure { await service.refresh() }
 
         let sessions = try context.fetch(FetchDescriptor<AgentSession>())
@@ -31,6 +33,18 @@ struct AgentStoreHarness {
         // A second pass finds nothing new and changes nothing.
         await service.refresh()
         #expect(try context.fetchCount(FetchDescriptor<AgentSpan>()) == spans.count)
+
+        // Sessions from before projects, as Maintenance files them at launch.
+        Projects.assign(modelContext: context)
+        let projects = Dictionary(try context.fetch(FetchDescriptor<Project>()).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let sessionProjects = Dictionary(try context.fetch(FetchDescriptor<AgentSession>()).map { ($0.key, $0.projectKey) },
+                                         uniquingKeysWith: { first, _ in first })
+        print("Projects (\(projects.count)):")
+        for summary in ProjectMetrics.summaries(service.samples(spans), project: { sessionProjects[$0].flatMap { $0 } ?? Project.none }) {
+            let project = projects[summary.key]
+            print("   \(project?.name ?? summary.key) \(Int(summary.time / 60))m, \(summary.sessions) sessions"
+                  + " [\(summary.key)] \(project?.path ?? "")")
+        }
 
         let categories = Dictionary(uniqueKeysWithValues: CategoryDefinition.defaults.map { ($0.key, $0) })
         let calendar = Calendar.current

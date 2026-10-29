@@ -142,6 +142,16 @@
         }
       }
     },
+    "%@ across all sessions": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有会话合计 %@"
+          }
+        }
+      }
+    },
     "%@ deep work": {
       "localizations": {
         "zh-Hans": {
@@ -602,6 +612,16 @@
         }
       }
     },
+    "A project is the git repository an agent worked in, wherever it's checked out, or else its folder. Time counts while at least one of its sessions was working, so sessions in parallel count once.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目是智能体工作所在的 git 仓库（不论检出在哪里），没有仓库时就是它的文件夹。只要项目中有一个会话在工作就计时，并行的会话只算一次。"
+          }
+        }
+      }
+    },
     "AI · %@ confidence": {
       "localizations": {
         "zh-Hans": {
@@ -682,6 +702,16 @@
         }
       }
     },
+    "Adding up %lld days…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在汇总 %lld 天…"
+          }
+        }
+      }
+    },
     "After working for": {
       "localizations": {
         "zh-Hans": {
@@ -702,12 +732,112 @@
         }
       }
     },
+    "Agent sessions": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体会话"
+          }
+        }
+      }
+    },
+    "Agent time": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体时间"
+          }
+        }
+      }
+    },
+    "Agent time by month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每月智能体时间"
+          }
+        }
+      }
+    },
+    "Agent time by week": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每周智能体时间"
+          }
+        }
+      }
+    },
     "Agents": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "智能体"
+          }
+        }
+      }
+    },
+    "Agents aren't being tracked": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有记录智能体"
+          }
+        }
+      }
+    },
+    "All": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部"
+          }
+        }
+      }
+    },
+    "All Time": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部时间"
+          }
+        }
+      }
+    },
+    "At least one agent working": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "至少一个智能体在工作"
+          }
+        }
+      }
+    },
+    "Date": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日期"
+          }
+        }
+      }
+    },
+    "First worked on": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "首次工作"
           }
         }
       }
@@ -1812,6 +1942,16 @@
         }
       }
     },
+    "Last worked on": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近工作"
+          }
+        }
+      }
+    },
     "Launch Weft at login": {
       "localizations": {
         "zh-Hans": {
@@ -1942,6 +2082,26 @@
         }
       }
     },
+    "Month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月"
+          }
+        }
+      }
+    },
+    "Most: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最多：%@"
+          }
+        }
+      }
+    },
     "Move to": {
       "localizations": {
         "zh-Hans": {
@@ -2042,12 +2202,32 @@
         }
       }
     },
+    "Next month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下个月"
+          }
+        }
+      }
+    },
     "Next week": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "下一周"
+          }
+        }
+      }
+    },
+    "Next year": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一年"
           }
         }
       }
@@ -2082,6 +2262,16 @@
         }
       }
     },
+    "No agent work": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有智能体工作"
+          }
+        }
+      }
+    },
     "No categories": {
       "localizations": {
         "zh-Hans": {
@@ -2092,12 +2282,42 @@
         }
       }
     },
+    "No coding agent has worked here.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有编程智能体在这里工作过。"
+          }
+        }
+      }
+    },
+    "No coding agent worked in this period.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这段时间没有编程智能体工作。"
+          }
+        }
+      }
+    },
     "No distractions": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "没有分心"
+          }
+        }
+      }
+    },
+    "No project": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无项目"
           }
         }
       }
@@ -2138,6 +2358,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "无"
+          }
+        }
+      }
+    },
+    "None yet": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无"
           }
         }
       }
@@ -2192,6 +2422,16 @@
         }
       }
     },
+    "Nothing": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无"
+          }
+        }
+      }
+    },
     "Nothing matches.": {
       "localizations": {
         "zh-Hans": {
@@ -2218,6 +2458,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "这段日期内没有记录。"
+          }
+        }
+      }
+    },
+    "Nothing was tracked in this period.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这段时间没有任何记录。"
           }
         }
       }
@@ -2382,6 +2632,16 @@
         }
       }
     },
+    "Period": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间范围"
+          }
+        }
+      }
+    },
     "Permissions": {
       "localizations": {
         "zh-Hans": {
@@ -2402,6 +2662,16 @@
         }
       }
     },
+    "Previous month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上个月"
+          }
+        }
+      }
+    },
     "Previous week": {
       "localizations": {
         "zh-Hans": {
@@ -2412,12 +2682,42 @@
         }
       }
     },
+    "Previous year": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一年"
+          }
+        }
+      }
+    },
     "Privacy": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "隐私"
+          }
+        }
+      }
+    },
+    "Project": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目"
+          }
+        }
+      }
+    },
+    "Projects": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目"
           }
         }
       }
@@ -2672,6 +2972,16 @@
         }
       }
     },
+    "Series": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系列"
+          }
+        }
+      }
+    },
     "Server": {
       "localizations": {
         "zh-Hans": {
@@ -2698,6 +3008,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "时段"
+          }
+        }
+      }
+    },
+    "Sessions in temporary folders or the home folder, or without a folder.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在临时文件夹或主目录中运行的会话，以及没有文件夹的会话。"
           }
         }
       }
@@ -2772,12 +3092,32 @@
         }
       }
     },
+    "Show this day": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看这一天"
+          }
+        }
+      }
+    },
     "Show when coding agents work for me": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "显示编程智能体为我工作的时间"
+          }
+        }
+      }
+    },
+    "Since %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自%@起"
           }
         }
       }
@@ -2982,6 +3322,16 @@
         }
       }
     },
+    "Temporary folders and home": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "临时文件夹和主目录"
+          }
+        }
+      }
+    },
     "The description helps the model decide what goes into this category.": {
       "localizations": {
         "zh-Hans": {
@@ -3012,12 +3362,32 @@
         }
       }
     },
+    "This Month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本月"
+          }
+        }
+      }
+    },
     "This Week": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "本周"
+          }
+        }
+      }
+    },
+    "This Year": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今年"
           }
         }
       }
@@ -3078,6 +3448,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "各类别时间"
+          }
+        }
+      }
+    },
+    "Time by project": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各项目时间"
           }
         }
       }
@@ -3158,6 +3538,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "记录已暂停"
+          }
+        }
+      }
+    },
+    "Turn on Show when coding agents work for me in Settings → Agents to see what they worked on.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在“设置 → 智能体”中打开“显示编程智能体为我工作的时间”，即可查看它们做了什么。"
           }
         }
       }
@@ -3252,6 +3642,26 @@
         }
       }
     },
+    "Week": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周"
+          }
+        }
+      }
+    },
+    "Week of %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 这一周"
+          }
+        }
+      }
+    },
     "Weft uses HAPI history when available, otherwise reads the session logs Claude Code, Codex and pi keep on this Mac. It keeps only session titles, project folders and times; prompts and replies are never stored or sent anywhere.": {
       "localizations": {
         "zh-Hans": {
@@ -3342,6 +3752,16 @@
         }
       }
     },
+    "Year": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "年"
+          }
+        }
+      }
+    },
     "Your HAPI hub doesn't report agent activity yet. Update the hub.": {
       "localizations": {
         "zh-Hans": {
@@ -3368,6 +3788,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "你的规则优先于 %lld 条内置规则。更具体的匹配（标题、网址）优先于域名，域名优先于应用。没有规则匹配的内容由设置中选择的模型分类；没有模型时则靠猜测。"
+          }
+        }
+      }
+    },
+    "Your time": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的时间"
           }
         }
       }
@@ -3525,12 +3955,32 @@
         }
       }
     },
+    "vs. last month": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与上月相比"
+          }
+        }
+      }
+    },
     "vs. last week": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "与上周相比"
+          }
+        }
+      }
+    },
+    "vs. last year": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与去年相比"
           }
         }
       }

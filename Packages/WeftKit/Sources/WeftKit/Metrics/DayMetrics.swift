@@ -49,7 +49,7 @@ public struct FocusScoreConfig: Sendable {
 }
 
 /// Everything the dashboards show for a span of time (usually one day).
-public struct DayMetrics: Sendable {
+public struct DayMetrics: Sendable, Codable, Equatable {
     public var activeTime: TimeInterval = 0
     public var focusTime: TimeInterval = 0
     public var deepWorkTime: TimeInterval = 0
@@ -193,7 +193,7 @@ public struct DayMetrics: Sendable {
 }
 
 /// 0–100 score with its components exposed so the UI can explain it.
-public struct FocusScore: Sendable, Equatable {
+public struct FocusScore: Sendable, Equatable, Codable {
     public var value: Int
     /// Share of active time spent in focus categories (0–1).
     public var focusRatio: Double

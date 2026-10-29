@@ -268,3 +268,55 @@ extension AgentActivityServiceTests {
         service.stop()
     }
 }
+
+extension AgentActivityServiceTests {
+    @Test func readingAgainKeepsWorkFromLogsThatAreGone() async throws {
+        try write([
+            Claude.prompt(at: 0, uuid: "p1"),
+            Claude.assistant(at: 10),
+            Claude.turnDuration(at: 11),
+        ])
+        await service.refresh()
+        // Claude Code deletes old logs; the history is only kept here.
+        try FileManager.default.removeItem(at: log)
+        service.reimport()
+        await service.refresh()
+        #expect(spans.map(\.key) == ["p1#0"])
+    }
+
+    @Test func sessionsAreFiledUnderTheirProject() async throws {
+        try write([
+            Claude.prompt(at: 0, uuid: "p1"),
+            Claude.assistant(at: 10),
+            Claude.turnDuration(at: 11),
+        ])
+        await service.refresh()
+        #expect(sessions.first?.projectKey == "folder:/Users/me/project")
+        let projects = try container.mainContext.fetch(FetchDescriptor<Project>())
+        #expect(projects.map(\.name) == ["project"])
+    }
+
+    @Test func logsOfSessionsWithoutAFolderAreReadAgain() async throws {
+        let day = home.appending(path: ".codex/sessions/2026/10/28")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let thread = "01a18298-0a45-7dd2-ad73-c34ffce6b3d9"
+        try Fixture.lines([
+            Codex.header(id: thread),
+            Codex.started("turn-1", at: 10),
+            Codex.item(at: 20),
+            Codex.ended("turn-1", at: 60),
+        ]).write(to: day.appending(path: "rollout-2026-10-28T20-59-24-\(thread).jsonl"))
+        await service.refresh()
+        // As older versions left a session first read partway through its log.
+        let session = try #require(sessions.first)
+        session.projectPath = nil
+        session.projectKey = nil
+        try container.mainContext.save()
+
+        service.rereadSessionsWithoutFolder()
+        await service.refresh()
+        #expect(session.projectPath == "/Users/me/codex-project")
+        #expect(session.projectKey == "folder:/Users/me/codex-project")
+        #expect(spans.map(\.key) == ["turn-1#0"])
+    }
+}
