@@ -61,10 +61,11 @@ public final class Preferences {
     public var remoteModel: String { didSet { save(remoteModel, "remoteModel") } }
 
     // Agents
-    /// Read Claude Code and Codex logs to show when agents worked.
+    /// Read Claude Code, Codex and pi logs to show when agents worked.
     public var agentTrackingEnabled: Bool { didSet { save(agentTrackingEnabled, "agentTrackingEnabled") } }
     public var agentClaudeEnabled: Bool { didSet { save(agentClaudeEnabled, "agentClaudeEnabled") } }
     public var agentCodexEnabled: Bool { didSet { save(agentCodexEnabled, "agentCodexEnabled") } }
+    public var agentPiEnabled: Bool { didSet { save(agentPiEnabled, "agentPiEnabled") } }
     /// How far back logs are read the first time.
     public var agentBackfillDays: Int { didSet { save(agentBackfillDays, "agentBackfillDays") } }
     /// Silence in a log longer than this inside a turn doesn't count as work.
@@ -101,6 +102,7 @@ public final class Preferences {
             "agentTrackingEnabled": true,
             "agentClaudeEnabled": true,
             "agentCodexEnabled": true,
+            "agentPiEnabled": true,
             "agentBackfillDays": 30,
             "agentSilentGapMinutes": 30,
             "countAgentWaiting": true,
@@ -134,6 +136,7 @@ public final class Preferences {
         agentTrackingEnabled = defaults.bool(forKey: "agentTrackingEnabled")
         agentClaudeEnabled = defaults.bool(forKey: "agentClaudeEnabled")
         agentCodexEnabled = defaults.bool(forKey: "agentCodexEnabled")
+        agentPiEnabled = defaults.bool(forKey: "agentPiEnabled")
         agentBackfillDays = defaults.integer(forKey: "agentBackfillDays")
         agentSilentGapMinutes = defaults.integer(forKey: "agentSilentGapMinutes")
         countAgentWaiting = defaults.bool(forKey: "countAgentWaiting")

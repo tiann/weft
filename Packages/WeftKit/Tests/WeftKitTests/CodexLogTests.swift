@@ -84,3 +84,22 @@ struct CodexLogTests {
         #expect(turns[0].offset == offset)
     }
 }
+
+extension CodexLogTests {
+    @Test func scannerKeepsSubagentIdentityWhenResumingWithoutTheHeader() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "weft-codex-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let url = home.appending(path: ".codex/sessions/2026/10/28/rollout-child.jsonl")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lines = [Codex.header(id: "child", sessionID: "root", source: ["subagent": ["thread_spawn": ["parent_thread_id": "root"]]]),
+                     Codex.started("t", at: 100), Codex.item(at: 110), Codex.ended("t", at: 120)]
+        try Fixture.lines(lines).write(to: url)
+        let scanner = AgentLogScanner(roots: AgentLogRoots(home: home))
+        let file = try #require(scanner.file(at: url.path))
+        let whole = try #require(scanner.scan(.init(file: file, offset: 0, sessionKey: nil)))
+        let resumed = try #require(scanner.scan(.init(file: file, offset: Fixture.offset(of: 1, in: lines), sessionKey: "codex:root")))
+        #expect(resumed.meta.isSubagent)
+        #expect(resumed.sessionKey == whole.sessionKey)
+        #expect(resumed.turns == whole.turns)
+    }
+}

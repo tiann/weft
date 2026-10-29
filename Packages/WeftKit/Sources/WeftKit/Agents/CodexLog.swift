@@ -12,7 +12,8 @@ struct CodexLogParser {
     /// The first line says what the thread is; it's only seen when reading from the start.
     private var awaitingHeader: Bool
 
-    init(startsAtBeginning: Bool) {
+    init(startsAtBeginning: Bool, meta: AgentLogMeta = AgentLogMeta()) {
+        self.meta = meta
         awaitingHeader = startsAtBeginning
     }
 

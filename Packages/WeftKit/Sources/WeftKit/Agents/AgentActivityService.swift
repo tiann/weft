@@ -29,6 +29,8 @@ public final class AgentActivityService {
     @ObservationIgnored private var remoteLive: Set<String> = []
     /// Working now according to the logs on this Mac.
     @ObservationIgnored private var localLive: Set<String> = []
+    /// Sessions with persisted HAPI history; native logs never supplement these sessions.
+    @ObservationIgnored private var hapiSessions: Set<String> = []
 
     /// How long after its last activity an open turn without a status file still counts as working.
     private let recentActivity: TimeInterval = 5 * 60
@@ -93,6 +95,20 @@ public final class AgentActivityService {
         waitingCache = nil
     }
 
+    /// Switch whole sessions to HAPI. No interval subtraction or mixing of sources.
+    /// Keep native metadata/cursors for identity, but remove their derived work records.
+    func preferHAPIHistory(for sessionKeys: Set<String>) throws {
+        let added = Array(sessionKeys.subtracting(hapiSessions))
+        if !added.isEmpty {
+            try modelContext.delete(model: AgentSpan.self, where: #Predicate { added.contains($0.sessionKey) })
+            try modelContext.save()
+            hapiSessions.formUnion(added)
+        }
+        localLive.subtract(sessionKeys)
+        publishLive()
+        waitingCache = nil
+    }
+
     /// Forgets the cached waiting time, after spans changed outside a scan.
     public func spansChanged() {
         waitingCache = nil
@@ -120,9 +136,9 @@ public final class AgentActivityService {
 
     // MARK: Settings
 
-    private var sources: (claude: Bool, codex: Bool) {
-        guard preferences.agentTrackingEnabled else { return (false, false) }
-        return (preferences.agentClaudeEnabled, preferences.agentCodexEnabled)
+    private var sources: (claude: Bool, codex: Bool, pi: Bool) {
+        guard preferences.agentTrackingEnabled else { return (false, false, false) }
+        return (preferences.agentClaudeEnabled, preferences.agentCodexEnabled, preferences.agentPiEnabled)
     }
 
     private var config: AgentTurnConfig {
@@ -134,6 +150,7 @@ public final class AgentActivityService {
             _ = preferences.agentTrackingEnabled
             _ = preferences.agentClaudeEnabled
             _ = preferences.agentCodexEnabled
+            _ = preferences.agentPiEnabled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.applySettings()
@@ -143,21 +160,24 @@ public final class AgentActivityService {
     }
 
     private func applySettings() {
-        let (claude, codex) = sources
-        if claude || codex {
+        let (claude, codex, pi) = sources
+        if claude || codex || pi {
             watch()
             requestScan()
         } else {
             stop()
-            liveSessions = []
+            localLive = []
+            if !preferences.agentTrackingEnabled { remoteLive = [] }
+            publishLive()
         }
     }
 
     private func watch() {
-        let (claude, codex) = sources
+        let (claude, codex, pi) = sources
         var paths: [String] = []
         if claude { paths += [roots.claudeProjects, roots.claudeSessions].map { $0.path(percentEncoded: false) } }
         if codex { paths.append(roots.codexSessions.path(percentEncoded: false)) }
+        if pi { paths.append(roots.piSessions.path(percentEncoded: false)) }
         let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }
         guard existing != watchedPaths || watcher == nil else { return }
         watcher?.stop()
@@ -199,23 +219,30 @@ public final class AgentActivityService {
     }
 
     private func scan(_ paths: Set<String>?) async {
-        let (claude, codex) = sources
-        guard claude || codex else { return }
+        let (claude, codex, pi) = sources
+        guard claude || codex || pi else { return }
         let scanner = AgentLogScanner(roots: roots, config: config)
         let since = Date.now.addingTimeInterval(-TimeInterval(max(1, preferences.agentBackfillDays)) * 86400)
 
         let files = await Task.detached(priority: .utility) {
             if let paths { return paths.sorted().compactMap(scanner.file(at:)) }
-            return scanner.discover(claude: claude, codex: codex, modifiedSince: since)
+            return scanner.discover(claude: claude, codex: codex, pi: pi, modifiedSince: since)
         }.value
         let cursors = fetchCursors(paths.map { Array($0) })
         let jobs = files
-            .filter { $0.kind == .codex ? codex : claude }
+            .filter { file in
+                switch file.kind {
+                case .claudeMain, .claudeSubagent: claude
+                case .codex: codex
+                case .pi: pi
+                }
+            }
             .compactMap { file -> AgentLogScanner.Job? in
                 guard let cursor = cursors[file.path] else {
                     return file.modified >= since ? AgentLogScanner.Job(file: file, offset: 0, sessionKey: nil) : nil
                 }
                 let replaced = cursor.fileID != file.fileID || file.size < cursor.resumeOffset
+                if !replaced, let key = cursor.sessionKey, hapiSessions.contains(key) { return nil }
                 if !replaced, cursor.size == file.size || cursor.skipped { return nil }
                 return AgentLogScanner.Job(file: file, offset: replaced ? 0 : cursor.resumeOffset,
                                            sessionKey: replaced ? nil : cursor.sessionKey)
@@ -230,7 +257,10 @@ public final class AgentActivityService {
             var start = 0
             while start < jobs.count {
                 let batch = Array(jobs[start..<min(start + 16, jobs.count)])
-                let results = await Task.detached(priority: .utility) { batch.compactMap(scanner.scan) }.value
+                let excluded = hapiSessions
+                let results = await Task.detached(priority: .utility) {
+                    batch.compactMap { scanner.scan($0, excluding: excluded) }
+                }.value
                 for result in results {
                     apply(result, cursor: cursors[result.file.path], config: scanner.config)
                     if result.file.kind == .codex, !result.meta.skip { touchedCodex.insert(result.sessionKey) }
@@ -256,7 +286,9 @@ public final class AgentActivityService {
     }
 
     /// Replaces what was read before from the same part of the file with `result`.
-    private func apply(_ result: AgentLogScanner.Result, cursor: AgentLogCursor?, config: AgentTurnConfig) {
+    func apply(_ result: AgentLogScanner.Result, cursor: AgentLogCursor?, config: AgentTurnConfig) {
+        // A HAPI report can arrive while the detached scanner is reading this batch.
+        guard !hapiSessions.contains(result.sessionKey) else { return }
         let path = result.file.path
         let cursor = cursor ?? {
             let cursor = AgentLogCursor(path: path, kind: result.file.kind)
@@ -309,18 +341,32 @@ public final class AgentActivityService {
 
         let key = result.sessionKey
         let session = (try? modelContext.fetch(FetchDescriptor<AgentSession>(predicate: #Predicate { $0.key == key })))?.first
-        guard let last = turns.map(\.end).max() else { return }
+        guard let last = turns.map(\.end).max() else {
+            if let session {
+                if session.projectPath == nil { session.projectPath = result.meta.cwd }
+                if !result.meta.isSubagent, let title = result.meta.title,
+                   !result.meta.titleFromPrefix || session.title == nil { session.update(\.title, to: title) }
+            }
+            return
+        }
         let record = session ?? {
-            let isCodex = result.file.kind == .codex
+            let source: AgentSource
+            let flavor: String
+            switch result.file.kind {
+            case .claudeMain, .claudeSubagent: (source, flavor) = (.claudeCode, "claude")
+            case .codex: (source, flavor) = (.codex, "codex")
+            case .pi: (source, flavor) = (.pi, "pi")
+            }
             let id = String(key.drop { $0 != ":" }.dropFirst())
-            let session = AgentSession(key: key, source: isCodex ? .codex : .claudeCode, flavor: isCodex ? "codex" : "claude",
+            let session = AgentSession(key: key, source: source, flavor: flavor,
                                        agentSessionID: id, lastActivity: last)
             modelContext.insert(session)
             return session
         }()
         record.update(\.lastActivity, to: max(record.lastActivity, last))
         if record.projectPath == nil { record.projectPath = result.meta.cwd }
-        if !result.meta.isSubagent, let title = result.meta.title { record.update(\.title, to: title) }
+        if !result.meta.isSubagent, let title = result.meta.title,
+           !result.meta.titleFromPrefix || record.title == nil { record.update(\.title, to: title) }
     }
 
     private func nameCodexSessions(_ keys: Set<String>) {
@@ -338,9 +384,9 @@ public final class AgentActivityService {
     /// Which sessions are working now: Claude Code says so in its status files; for the rest,
     /// an open turn with recent activity. Checked again when that activity gets too old.
     private func refreshLive() {
-        let (claude, codex) = sources
+        let (claude, codex, pi) = sources
         let statuses = claude ? ClaudeLiveRegistry.read(roots.claudeSessions) : [:]
-        var live = Set(statuses.filter { $0.value == "busy" }.map { "claude:" + $0.key })
+        var live = Set(statuses.filter { $0.value == "busy" }.map { "claude:" + $0.key }).subtracting(hapiSessions)
 
         let now = Date.now
         let recent = now.addingTimeInterval(-recentActivity)
@@ -348,7 +394,8 @@ public final class AgentActivityService {
         var nextCheck: Date?
         for span in open {
             let isClaude = span.sessionKey.hasPrefix("claude:")
-            guard isClaude ? claude : codex else { continue }
+            let enabled = isClaude ? claude : (span.sessionKey.hasPrefix("pi:") ? pi : (span.sessionKey.hasPrefix("codex:") && codex))
+            guard enabled, !hapiSessions.contains(span.sessionKey) else { continue }
             // A status file is better evidence than the clock.
             if isClaude, statuses[String(span.sessionKey.dropFirst("claude:".count))] != nil { continue }
             live.insert(span.sessionKey)

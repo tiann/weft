@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import WeftKit
 
-/// Reads the real Claude Code and Codex logs on this Mac and checks the turns against what
+/// Reads the real Claude Code, Codex and pi logs on this Mac and checks the turns against what
 /// Claude itself measured. Opt in with `WEFT_AGENT_LOG_TESTS=1 swift test --filter AgentLogHarness`.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["WEFT_AGENT_LOG_TESTS"] != nil))
 struct AgentLogHarness {
@@ -55,6 +55,25 @@ struct AgentLogHarness {
         }
         let bytes = files.reduce(0) { $0 + $1.size }
         print("Codex: \(files.count) logs (\(skipped) skipped), \(bytes / 1_000_000) MB, \(turns) turns in \(elapsed)")
+    }
+
+    @Test func piLogsReadQuickly() {
+        let since = Date.now.addingTimeInterval(-30 * 86400)
+        let files = scanner.discover(claude: false, codex: false, pi: true, modifiedSince: since)
+        var turns = 0
+        var seconds: TimeInterval = 0
+        let elapsed = ContinuousClock().measure {
+            for file in files {
+                guard let result = scanner.scan(.init(file: file, offset: 0, sessionKey: nil)) else { continue }
+                for turn in result.turns where turn.hasActivity {
+                    turns += 1
+                    seconds += AgentMetrics.duration(AgentTurnBuilder.pieces(turn))
+                }
+            }
+        }
+        #expect(turns > 0)
+        #expect(files.allSatisfy { $0.kind == .pi })
+        print("pi: \(files.count) logs, \(turns) turns, \(String(format: "%.2f", seconds / 3600)) hours in \(elapsed)")
     }
 
     /// End time → `durationMs` of each `turn_duration` line, and when queued prompts came in.

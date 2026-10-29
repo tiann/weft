@@ -692,12 +692,12 @@
         }
       }
     },
-    "Agents HAPI runs on your other machines, and ones Weft can't read here, come from your HAPI hub through `hapi usage`. Sessions on this Mac whose logs Weft reads anyway aren't counted twice.": {
+    "For sessions recorded by your HAPI hub, Weft uses only HAPI history and skips local logs. Saved HAPI history stays authoritative when syncing is off or unavailable; other sessions use local logs.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "HAPI 在你其他机器上运行的智能体，以及 Weft 在这里读不到的智能体，会通过 `hapi usage` 从你的 HAPI hub 获取。Weft 本来就能读到日志的本机会话不会重复计算。"
+            "value": "对于 HAPI hub 已记录的会话，Weft 只使用 HAPI 历史，不再解析本地日志。关闭同步或无法连接时，仍以已保存的 HAPI 历史为准；其他会话使用本地日志。"
           }
         }
       }
@@ -732,12 +732,12 @@
         }
       }
     },
-    "An agent works from your prompt until it answers. Time it spends waiting for your permission or your answer to a question is left out, and so is any longer stretch with nothing in its log.": {
+    "HAPI history follows the turns and waits reported by your hub. For local-log sessions, work runs from your prompt until the answer, excluding permission waits and long silences. Read Again rebuilds only local-log history.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "智能体从你发出提示开始工作，到它回答为止。它等待你授权或回答问题的时间不计入，日志中长时间没有内容的时段也不计入。"
+            "value": "HAPI 历史以 hub 报告的回合和等待时间为准。本地日志会话从提示开始计时，直到回复结束，扣除权限等待和长时间静默。“重新读取”只重建本地日志历史。"
           }
         }
       }
@@ -3232,12 +3232,12 @@
         }
       }
     },
-    "Weft reads the session logs Claude Code and Codex keep on this Mac to see when each agent was working. It keeps only session titles, project folders and times; prompts and replies are never stored or sent anywhere.": {
+    "Weft uses HAPI history when available, otherwise reads the session logs Claude Code, Codex and pi keep on this Mac. It keeps only session titles, project folders and times; prompts and replies are never stored or sent anywhere.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Weft 读取 Claude Code 和 Codex 在这台 Mac 上保存的会话日志，以了解每个智能体何时在工作。它只保留会话标题、项目文件夹和时间，从不保存或发送提示和回复。"
+            "value": "Weft 优先使用 HAPI 的历史；未被 HAPI 记录的会话才读取本机 Claude Code、Codex 和 pi 的日志。它只保留会话标题、项目文件夹和时间，从不保存或发送提示和回复。"
           }
         }
       }

@@ -4,6 +4,7 @@ import Foundation
 public enum AgentSource: String, Codable, Sendable {
     case claudeCode
     case codex
+    case pi
     case hapi
 }
 
@@ -25,6 +26,8 @@ public enum AgentLogKind: String, Codable, Sendable {
     case claudeSubagent
     /// `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<thread>.jsonl`
     case codex
+    /// `~/.pi/agent/sessions/<project>/<time>_<session>.jsonl`
+    case pi
 }
 
 /// One thing a log says happened, in file order. Parsers turn lines into events and
@@ -49,6 +52,8 @@ public struct AgentLogMeta: Sendable, Equatable {
     public var sessionID: String?
     /// Explicit names first (`/rename`), then generated titles.
     public var title: String?
+    /// A recovered prefix title may be older than the title already stored.
+    public var titleFromPrefix = false
     /// The directory the session started in.
     public var cwd: String?
     /// A subagent's own log; its work belongs to the parent session.

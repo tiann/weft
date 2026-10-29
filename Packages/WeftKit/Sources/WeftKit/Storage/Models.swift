@@ -197,14 +197,14 @@ public final class TimeEntrySummary {
     }
 }
 
-/// A coding agent's session: Claude Code, Codex, or one HAPI manages. Only what identifies
+/// A coding agent's session: Claude Code, Codex, pi, or one HAPI manages. Only what identifies
 /// it is kept; prompts and replies never are.
 @Model
 public final class AgentSession {
-    /// `claude:<session id>`, `codex:<root thread id>` or `hapi:<session id>`.
+    /// `claude:<session id>`, `codex:<root thread id>`, `pi:<session id>` or `hapi:<session id>`.
     @Attribute(.unique) public var key: String
     public var sourceRaw: String
-    /// `claude`, `codex`, or whichever agent HAPI reports.
+    /// `claude`, `codex`, `pi`, or whichever agent HAPI reports.
     public var flavor: String
     public var agentSessionID: String
     public var hapiSessionID: String?
@@ -265,6 +265,19 @@ public final class AgentSpan {
     public var trigger: AgentTrigger { AgentTrigger(rawValue: triggerRaw) ?? .user }
 }
 
+/// A local/HAPI identity confirmed by the hub. When the HAPI session has imported history,
+/// that history is authoritative, even outside the report's sliding time window.
+@Model
+public final class HAPISessionLink {
+    @Attribute(.unique) public var hapiID: String
+    public var localKey: String
+
+    public init(hapiID: String, localKey: String) {
+        self.hapiID = hapiID
+        self.localKey = localKey
+    }
+}
+
 /// How far an agent log has been read.
 @Model
 public final class AgentLogCursor {
@@ -297,6 +310,7 @@ public enum WeftSchema {
     public static let models: [any PersistentModel.Type] = [
         ActivitySegment.self, CategoryRecord.self, UserRule.self, AIClassificationRecord.self, SessionRecord.self,
         TimeEntrySummary.self, AgentSession.self, AgentSpan.self, AgentLogCursor.self,
+        HAPISessionLink.self,
     ]
 
     public static let folderName = "Weft"

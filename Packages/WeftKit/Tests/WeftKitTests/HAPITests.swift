@@ -28,44 +28,60 @@ enum HAPIFixture {
 struct HAPIImporterTests {
     let now = Fixture.date(10_000)
 
-    func plan(_ data: Data, localFlavors: Set<String> = ["claude", "codex"], localHosts: Set<String> = ["my-mac.local"]) throws -> [HAPIImporter.Decision] {
-        HAPIImporter.plan(try HAPIActivityReport.decode(data), localFlavors: localFlavors, localHosts: localHosts, now: now)
+    func plan(_ data: Data, localHosts: Set<String> = ["my-mac.local"]) throws -> [HAPIImporter.Session] {
+        HAPIImporter.plan(try HAPIActivityReport.decode(data), localHosts: localHosts, now: now)
     }
 
     @Test func remoteTurnsBecomePiecesWithoutTheWaits() throws {
-        let decisions = try plan(HAPIFixture.report([
+        let session = try #require(plan(HAPIFixture.report([
             HAPIFixture.session("s1", turns: [(0, 600), (900, nil)], waits: [(100, 160), (200, 202)]),
-        ]))
-        guard case .record(let session) = decisions.first else { Issue.record("expected a record"); return }
+        ])).first)
         #expect(session.key == "hapi:s1")
         #expect(session.flavor == "codex")
         #expect(session.host == "Build box")
+        #expect(session.localKey == nil)
         #expect(session.isWorking)
-        // The 2 s wait is a rule answering, not the user.
         #expect(session.pieces.map { $0.end.timeIntervalSince($0.start) } == [100, 440, 9100])
         #expect(session.pieces.map(\.isOpen) == [false, false, true])
         #expect(session.pieces.first?.waitedOnUser == 60)
         #expect(Set(session.pieces.map(\.turnID)).count == 2)
     }
 
-    @Test func sessionsWeftReadsItselfAreOnlyLinked() throws {
-        let decisions = try plan(HAPIFixture.report([
-            HAPIFixture.session("local-claude", flavor: "claude", machine: "local-machine", agentSessionID: "abc", turns: [(0, 60)]),
-            HAPIFixture.session("by-host", flavor: "codex", machine: "unknown", host: "my-mac.local", agentSessionID: "t2", turns: [(0, 60)]),
-        ]))
-        #expect(decisions == [.link(localKey: "claude:abc", hapiID: "local-claude"), .link(localKey: "codex:t2", hapiID: "by-host")])
+    @Test(arguments: ["claude", "codex", "pi"])
+    func localAgentsAreImportedRatherThanOnlyLinked(flavor: String) throws {
+        let imported = try #require(plan(HAPIFixture.report([
+            HAPIFixture.session("local", flavor: flavor, machine: "local-machine", agentSessionID: "abc", turns: [(0, 60)]),
+        ])).first)
+        #expect(imported.localKey == "\(flavor):abc")
+        #expect(imported.host == nil)
+        #expect(imported.pieces.count == 1)
     }
 
-    @Test func localAgentsWeftCantReadAreRecordedAsThisMac() throws {
-        let decisions = try plan(HAPIFixture.report([
+    @Test func hostFallbackRequiresUnknownMachineIdentity() throws {
+        let session = HAPIFixture.session("s1", host: "my-mac.local", turns: [(0, 60)])
+        #expect(try plan(HAPIFixture.report([session])).first?.localKey == nil)
+        #expect(try plan(HAPIFixture.report([session], localMachine: nil)).first?.localKey == "codex:thread-1")
+    }
+
+    @Test func unrelatedOrUnidentifiedSessionsDoNotSuppressNativeLogs() throws {
+        let imported = try plan(HAPIFixture.report([
+            HAPIFixture.session("remote-pi", flavor: "pi", turns: [(0, 60)]),
+            HAPIFixture.session("unknown-id", machine: "local-machine", agentSessionID: nil, turns: [(0, 60)]),
             HAPIFixture.session("cursor", flavor: "cursor", machine: "local-machine", turns: [(0, 60)]),
-            HAPIFixture.session("codex-off", flavor: "codex", machine: "local-machine", turns: [(0, 60)]),
-        ]), localFlavors: ["claude"])
-        let hosts = decisions.compactMap { decision -> String?? in
-            if case .record(let session) = decision { return .some(session.host) }
-            return nil
-        }
-        #expect(hosts == [nil, nil])
+        ]))
+        #expect(imported.count == 3)
+        #expect(imported.allSatisfy { $0.localKey == nil })
+        #expect(imported[2].host == nil)
+    }
+
+    @Test func emptyHistoryIsNotEvidenceButAnAllWaitTurnIs() throws {
+        #expect(try plan(HAPIFixture.report([HAPIFixture.session("empty", turns: [])])).isEmpty)
+        let waiting = try #require(plan(HAPIFixture.report([
+            HAPIFixture.session("waiting", machine: "local-machine", turns: [(0, 60)], waits: [(0, 60)]),
+        ])).first)
+        #expect(waiting.localKey == "codex:thread-1")
+        #expect(waiting.pieces.isEmpty)
+        #expect(!waiting.turnIDs.isEmpty)
     }
 
     @Test func otherReportVersionsAreRefused() {
@@ -185,14 +201,36 @@ struct HAPISyncTests {
         let fake = fake
         sync = HAPISync(modelContext: container.mainContext, preferences: preferences, agents: agents, home: home,
                         runner: { _, arguments in fake.run(arguments) })
-        fake.answer("--version", stdout: Data("hapi version: 0.32.0\n".utf8))
+        fake.answer("--version", stdout: Data("hapi version: 0.33.0\n".utf8))
     }
 
     private var spans: [AgentSpan] {
         (try? container.mainContext.fetch(FetchDescriptor<AgentSpan>(sortBy: [SortDescriptor(\.start)]))) ?? []
     }
-
     private var sessions: [AgentSession] { (try? container.mainContext.fetch(FetchDescriptor<AgentSession>())) ?? [] }
+    private var cursors: [AgentLogCursor] { (try? container.mainContext.fetch(FetchDescriptor<AgentLogCursor>())) ?? [] }
+    private var seconds: TimeInterval { AgentMetrics.agentHours(agents.samples(spans)) }
+
+    @discardableResult
+    private func writePi(_ lines: [String], filename: String = "session.jsonl") throws -> URL {
+        let file = home.appending(path: ".pi/agent/sessions/--project--/\(filename)")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Fixture.lines([Pi.header()] + lines).write(to: file)
+        return file
+    }
+
+    private func append(_ lines: [String], to file: URL) throws {
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Fixture.lines(lines))
+    }
+
+    private func answerPi(turns: [(Double, Double?)], waits: [(Double, Double?)] = []) {
+        fake.answer("usage", stdout: HAPIFixture.report([
+            HAPIFixture.session("h1", flavor: "pi", machine: "local-machine", agentSessionID: "session-1", turns: turns, waits: waits),
+        ]))
+    }
 
     @Test func importsRemoteWorkAndUpdatesItInPlace() async throws {
         fake.answer("usage", stdout: HAPIFixture.report([HAPIFixture.session("s1", turns: [(0, 600), (900, nil)])]))
@@ -202,41 +240,285 @@ struct HAPISyncTests {
         #expect(spans.last?.isOpen == true)
         #expect(agents.liveSessions == ["hapi:s1"])
         let session = try #require(sessions.first)
-        #expect(session.key == "hapi:s1")
         #expect(session.source == .hapi)
         #expect(session.host == "Build box")
         #expect(session.title == "Port the runner")
-
-        // The open turn ended; nothing is added twice.
         fake.answer("usage", stdout: HAPIFixture.report([HAPIFixture.session("s1", turns: [(900, 1_500)])]))
         await sync.sync(now: Fixture.date(2_000))
         #expect(spans.count == 2)
         #expect(spans.last?.end == Fixture.date(1_500))
         #expect(spans.last?.isOpen == false)
         #expect(agents.liveSessions.isEmpty)
-        // The version is only checked once.
         #expect(fake.commands == ["--version", "usage", "usage"])
     }
 
-    @Test func linksSessionsWeftReadsItself() async throws {
-        container.mainContext.insert(AgentSession(key: "claude:abc", source: .claudeCode, flavor: "claude", agentSessionID: "abc", lastActivity: .now))
+    @Test func hapiFirstSkipsNativeLogParsing() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        await agents.refresh()
+        #expect(seconds == 600)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        #expect(cursors.isEmpty)
+        #expect(sessions.map(\.key) == ["hapi:h1"])
+        agents.stop()
+    }
+
+    @Test(arguments: [10.0, 1_200.0])
+    func hapiReplacesTheWholeNativeSessionWithoutClipping(nativeEnd: Double) async throws {
+        // Even older native-only history must not be mixed into a HAPI-owned session.
+        try writePi([Pi.prompt(at: -600, id: "older"), Pi.assistant(at: -300, stop: "stop"),
+                     Pi.prompt(at: 0, id: "p"), Pi.assistant(at: nativeEnd, stop: "stop")])
+        await agents.refresh()
+        #expect(seconds == nativeEnd + 300)
+        let scannedAt = cursors.first?.scannedAt
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(2_000))
+        #expect(seconds == 600)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        await agents.refresh()
+        #expect(cursors.first?.scannedAt == scannedAt)
+        #expect(AgentMetrics.maxConcurrency(agents.samples(spans)) == 1)
+        agents.stop()
+    }
+
+    @Test func onlySessionsActuallyRecordedByHAPIAreSuppressed() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        let claude = home.appending(path: ".claude/projects/-project/standalone.jsonl")
+        try FileManager.default.createDirectory(at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Fixture.lines([Claude.prompt(at: 0, uuid: "standalone-p"), Claude.assistant(at: 20), Claude.turnDuration(at: 30)]).write(to: claude)
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        await agents.refresh()
+        #expect(seconds == 630)
+        #expect(Set(spans.map(\.sessionKey)) == ["hapi:h1", "claude:standalone"])
+        #expect(cursors.count == 1)
+        agents.stop()
+    }
+
+    @Test func emptyReportsAndMetadataOnlySessionsStillAllowFallback() async throws {
+        let file = try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        fake.answer("usage", stdout: HAPIFixture.report([]))
+        await sync.sync(now: Fixture.date(1_000))
+        await agents.refresh()
+        #expect(seconds == 10)
+        answerPi(turns: [])
+        await sync.sync(now: Fixture.date(1_100))
+        try append([Pi.prompt(at: 20, id: "q"), Pi.assistant(at: 30, stop: "stop")], to: file)
+        await agents.refresh()
+        #expect(seconds == 20)
+        #expect(spans.allSatisfy { $0.sessionKey == "pi:session-1" })
+        #expect(try container.mainContext.fetchCount(FetchDescriptor<HAPISessionLink>()) == 0)
+        agents.stop()
+    }
+
+    @Test func aFailedInitialReportDoesNotDisableFallback() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        fake.answer("usage", status: 1, stderr: "offline")
+        await sync.sync()
+        await agents.refresh()
+        #expect(seconds == 10)
+        #expect(spans.map(\.sessionKey) == ["pi:session-1"])
+        agents.stop()
+    }
+
+    @Test func emptyIncrementalReportsAndOfflineScansKeepHAPIOwnership() async throws {
+        let file = try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        fake.answer("usage", stdout: HAPIFixture.report([]))
+        await sync.sync(now: Fixture.date(10_000))
+        try append([Pi.prompt(at: 700, id: "q"), Pi.assistant(at: 800, stop: "stop")], to: file)
+        await agents.refresh()
+        #expect(seconds == 600)
+        fake.answer("usage", status: 1, stderr: "offline")
+        await sync.sync(now: Fixture.date(10_100))
+        await agents.refresh()
+        #expect(seconds == 600)
+        #expect(cursors.isEmpty)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        agents.stop()
+    }
+
+    @Test func ownershipSurvivesNewServiceInstancesAndDisabledSync() async throws {
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        preferences.agentHAPIEnabled = false
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        let restarted = AgentActivityService(modelContext: container.mainContext, preferences: preferences, roots: AgentLogRoots(home: home))
+        let hapi = HAPISync(modelContext: container.mainContext, preferences: preferences, agents: restarted, home: home,
+                            runner: { _, _ in throw ProcessRunnerError.launchFailed("must not contact HAPI") })
+        await hapi.sync()
+        await restarted.refresh()
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        #expect(cursors.isEmpty)
+        restarted.stop()
+    }
+
+    @Test func nativeTogglesAndReimportsNeverReenableOwnedLogs() async throws {
+        let file = try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        await agents.refresh()
+        preferences.agentPiEnabled = false
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        preferences.agentPiEnabled = true
+        try append([Pi.prompt(at: 700, id: "q"), Pi.assistant(at: 800, stop: "stop")], to: file)
+        agents.reimport()
+        await agents.refresh()
+        #expect(seconds == 600)
+        #expect(cursors.isEmpty)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        agents.stop()
+    }
+
+    @Test func lateNativeScanResultsCannotReintroduceDuplicateWork() async throws {
+        let file = try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        let scanner = AgentLogScanner(roots: AgentLogRoots(home: home))
+        let log = try #require(scanner.file(at: file.path))
+        // The detached read started before HAPI answered, but its result arrives afterward.
+        let result = try #require(scanner.scan(.init(file: log, offset: 0, sessionKey: nil)))
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        agents.apply(result, cursor: nil, config: scanner.config)
+        try container.mainContext.save()
+        #expect(seconds == 600)
+        #expect(cursors.isEmpty)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+    }
+
+    @Test func codexChildSilenceCannotRemoveParentHAPIHistory() async throws {
+        preferences.agentSilentGapMinutes = 1
+        let file = home.appending(path: ".codex/sessions/2026/10/28/rollout-child.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Fixture.lines([
+            Codex.header(id: "child", sessionID: "root", source: ["subagent": ["thread_spawn": ["parent_thread_id": "root"]]]),
+            Codex.started("child-turn", at: 100), Codex.item(at: 110),
+        ]).write(to: file)
+        await agents.refresh()
+        #expect(seconds == 10)
+        let scannedAt = cursors.first?.scannedAt
         fake.answer("usage", stdout: HAPIFixture.report([
-            HAPIFixture.session("h1", flavor: "claude", machine: "local-machine", agentSessionID: "abc", turns: [(0, 60)]),
+            HAPIFixture.session("h1", machine: "local-machine", agentSessionID: "root", turns: [(0, 600)]),
         ]))
         await sync.sync(now: Fixture.date(1_000))
+        try append([Codex.ended("child-turn", at: 600)], to: file)
+        await agents.refresh()
+        #expect(seconds == 600)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        #expect(cursors.first?.scannedAt == scannedAt)
+        agents.stop()
+    }
+
+    @Test(arguments: ["claude", "codex"])
+    func newChildLogsOfOwnedSessionsAreSkipped(flavor: String) async throws {
+        fake.answer("usage", stdout: HAPIFixture.report([
+            HAPIFixture.session("h1", flavor: flavor, machine: "local-machine", agentSessionID: "root", turns: [(0, 600)]),
+        ]))
+        await sync.sync(now: Fixture.date(1_000))
+        let file = home.appending(path: flavor == "claude" ? ".claude/projects/-project/root/subagents/agent-child.jsonl"
+                                                          : ".codex/sessions/2026/10/28/rollout-child.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lines = flavor == "claude" ? [Claude.prompt(at: 100, uuid: "p"), Claude.assistant(at: 110), Claude.turnDuration(at: 120)]
+            : [Codex.header(id: "child", sessionID: "root", source: ["subagent": ["thread_spawn": ["parent_thread_id": "root"]]]),
+               Codex.started("child-turn", at: 100), Codex.item(at: 110), Codex.ended("child-turn", at: 120)]
+        try Fixture.lines(lines).write(to: file)
+        let scanner = AgentLogScanner(roots: AgentLogRoots(home: home))
+        let log = try #require(scanner.file(at: file.path))
+        #expect(scanner.scan(.init(file: log, offset: 0, sessionKey: nil), excluding: ["\(flavor):root"]) == nil)
+        await agents.refresh()
+        #expect(seconds == 600)
+        #expect(cursors.isEmpty)
+        agents.stop()
+    }
+
+    @Test func hapiWaitsAreAuthoritativeAndNativeWaitsAreNotSubtractedAgain() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "toolUse"),
+                     Pi.question(at: 600, duration: 590), Pi.assistant(at: 600, stop: "aborted")])
+        await agents.refresh()
+        #expect(seconds == 10)
+        answerPi(turns: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
+        #expect(seconds == 600)
+        answerPi(turns: [(0, 600)], waits: [(10, 600)])
+        await sync.sync(now: Fixture.date(1_100))
+        #expect(seconds == 10)
+        #expect(spans.first?.waitedOnUser == 590)
+        agents.stop()
+    }
+
+    @Test func allWaitHAPIHistoryStillSupersedesNativeWork() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 600, stop: "stop")])
+        await agents.refresh()
+        answerPi(turns: [(0, 600)], waits: [(0, 600)])
+        await sync.sync(now: Fixture.date(1_000))
         #expect(spans.isEmpty)
-        #expect(sessions.first?.hapiSessionID == "h1")
+        #expect(sessions.contains { $0.key == "hapi:h1" })
+        agents.reimport()
+        await agents.refresh()
+        #expect(spans.isEmpty)
+        #expect(cursors.isEmpty)
+        agents.stop()
+    }
+
+    @Test func aLegacyLinkWithoutImportedHistoryStillUsesNativeFallback() async throws {
+        container.mainContext.insert(HAPISessionLink(hapiID: "h1", localKey: "pi:session-1"))
+        try container.mainContext.save()
+        let hapi = HAPISync(modelContext: container.mainContext, preferences: preferences, agents: agents, home: home,
+                            runner: { _, _ in throw ProcessRunnerError.launchFailed("offline") })
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        await hapi.sync()
+        await agents.refresh()
+        #expect(seconds == 10)
+        agents.stop()
+    }
+
+    @Test func remoteSessionsWithMatchingNativeIDsStayIndependent() async throws {
+        try writePi([Pi.prompt(at: 0, id: "p"), Pi.assistant(at: 10, stop: "stop")])
+        fake.answer("usage", stdout: HAPIFixture.report([
+            HAPIFixture.session("remote", flavor: "pi", agentSessionID: "session-1", turns: [(0, 600)]),
+        ]))
+        await sync.sync(now: Fixture.date(1_000))
+        await agents.refresh()
+        #expect(seconds == 610)
+        #expect(Set(spans.map(\.sessionKey)) == ["pi:session-1", "hapi:remote"])
+        agents.stop()
+    }
+
+    @Test func staleNativeLiveSignalsCannotOverrideHAPI() async throws {
+        let registry = home.appending(path: ".claude/sessions/process.json")
+        try FileManager.default.createDirectory(at: registry.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"sessionId":"root","status":"busy"}"#.utf8).write(to: registry)
+        fake.answer("usage", stdout: HAPIFixture.report([
+            HAPIFixture.session("h1", flavor: "claude", machine: "local-machine", agentSessionID: "root", turns: [(0, 600)]),
+        ]))
+        await sync.sync(now: Fixture.date(1_000))
+        await agents.refresh()
+        #expect(!agents.isWorking)
+        agents.stop()
+    }
+
+    @Test func failedSyncStopsLiveExtrapolationWithoutSwitchingSources() async throws {
+        let now = Date.now
+        let t = now.timeIntervalSince(Fixture.date(0))
+        answerPi(turns: [(t - 60, nil)])
+        await sync.sync(now: now)
+        #expect(agents.liveSessions == ["hapi:h1"])
+        fake.answer("usage", status: 1, stderr: "offline")
+        await sync.sync(now: now.addingTimeInterval(60))
+        await agents.refresh()
+        #expect(!agents.isWorking)
+        #expect(spans.map(\.sessionKey) == ["hapi:h1"])
+        #expect(AgentMetrics.agentHours(agents.samples(spans, now: now.addingTimeInterval(600))) == 60)
+        agents.stop()
     }
 
     @Test func saysWhatNeedsUpdating() async {
         fake.answer("usage", status: 1, stderr: "Unknown command: usage\nRun hapi to choose an agent.")
         await sync.sync()
-        #expect(sync.status == .cliTooOld(version: "0.32.0"))
-
+        #expect(sync.status == .cliTooOld(version: "0.33.0"))
         fake.answer("usage", status: 4, stderr: "hapi usage: the hub doesn't report agent activity yet; update it")
         await sync.sync()
         #expect(sync.status == .hubTooOld)
-
         fake.answer("usage", status: 3, stderr: "hapi usage: CLI_API_TOKEN is required")
         await sync.sync()
         #expect(sync.status == .notSignedIn)

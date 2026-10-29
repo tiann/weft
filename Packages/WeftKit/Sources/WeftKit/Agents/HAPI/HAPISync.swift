@@ -2,9 +2,8 @@ import Foundation
 import Observation
 import SwiftData
 
-/// Imports agent work from the user's HAPI hub through `hapi usage --json`: sessions on
-/// other machines, and agents whose logs Weft can't read. Sessions on this Mac whose logs
-/// Weft reads itself are only linked, never counted twice.
+/// Imports authoritative agent work from the user's HAPI hub through `hapi usage --json`.
+/// Native logs are a fallback only for sessions HAPI has not recorded.
 @MainActor
 @Observable
 public final class HAPISync {
@@ -54,11 +53,15 @@ public final class HAPISync {
         self.agents = agents
         self.home = home
         self.runner = runner
+        // Restore source ownership before the first native scan, even when the hub is offline.
+        try? restoreSourceChoices()
     }
 
-    public func start() {
+    /// Finish the initial bounded attempt before the app starts scanning native logs.
+    public func start() async {
         observeSettings()
-        applySettings()
+        await sync()
+        applySettings(syncImmediately: false)
     }
 
     private var isEnabled: Bool { preferences.agentTrackingEnabled && preferences.agentHAPIEnabled }
@@ -76,7 +79,7 @@ public final class HAPISync {
         }
     }
 
-    private func applySettings() {
+    private func applySettings(syncImmediately: Bool = true) {
         loop?.cancel()
         loop = nil
         guard isEnabled else {
@@ -86,15 +89,17 @@ public final class HAPISync {
         }
         // Every 5 minutes; less often while it keeps failing.
         loop = Task { [weak self] in
+            if syncImmediately { await self?.sync() }
             while !Task.isCancelled {
                 guard let self else { return }
-                await sync()
                 let delay: TimeInterval = switch failures {
                 case 0: 5 * 60
                 case 1: 15 * 60
                 default: 60 * 60
                 }
                 try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                await sync()
             }
         }
     }
@@ -120,23 +125,28 @@ public final class HAPISync {
         self.binary = binary
         status = .syncing
         do {
-            guard let version = try await checkedVersion(binary) else { return }
+            guard let version = try await checkedVersion(binary) else {
+                agents.setRemoteLive([])
+                return
+            }
             let window = min(maximumWindow, TimeInterval(max(1, preferences.agentBackfillDays)) * 86400)
             let since = max(now.addingTimeInterval(-window), lastSuccess?.addingTimeInterval(-overlap) ?? .distantPast)
             let output = try await runner(binary, ["usage", "--json", "--since", Self.milliseconds(since), "--until", Self.milliseconds(now)])
             guard handleExit(output, version: version) else {
                 failures += 1
+                agents.setRemoteLive([])
                 return
             }
             let report = try HAPIActivityReport.decode(output.stdout)
             hubURL = report.hubUrl
-            apply(report, now: now)
+            try apply(report, now: now)
             lastSuccess = now
             failures = 0
             status = .synced(now)
         } catch {
             failures += 1
             status = .failed(Self.describe(error))
+            agents.setRemoteLive([])
         }
     }
 
@@ -208,40 +218,73 @@ public final class HAPISync {
 
     // MARK: Storing
 
-    private func apply(_ report: HAPIActivityReport, now: Date) {
-        var localFlavors: Set<String> = []
-        if preferences.agentClaudeEnabled { localFlavors.insert("claude") }
-        if preferences.agentCodexEnabled { localFlavors.insert("codex") }
+    private func apply(_ report: HAPIActivityReport, now: Date) throws {
         let host = ProcessInfo.processInfo.hostName.lowercased()
         let localHosts: Set<String> = [host, host.hasSuffix(".local") ? String(host.dropLast(6)) : host + ".local"]
-        let decisions = HAPIImporter.plan(report, localFlavors: localFlavors, localHosts: localHosts, now: now,
-                                          config: AgentTurnConfig(silentGap: TimeInterval(max(1, preferences.agentSilentGapMinutes) * 60)))
+        let imported = HAPIImporter.plan(report, localHosts: localHosts, now: now)
+        for session in imported {
+            store(session)
+            if let localKey = session.localKey { rememberLink(hapiID: session.hapiID, localKey: localKey) }
+        }
+        // Do not discard the fallback until the authoritative history is safely stored.
+        try modelContext.save()
+        try restoreSourceChoices()
+        agents.spansChanged()
+        agents.setRemoteLive(Set(imported.filter(\.isWorking).map(\.key)))
+    }
 
-        var working: Set<String> = []
-        for decision in decisions {
-            switch decision {
-            case .link(let localKey, let hapiID):
-                let session = (try? modelContext.fetch(FetchDescriptor<AgentSession>(predicate: #Predicate { $0.key == localKey })))?.first
-                session?.hapiSessionID = hapiID
-            case .record(let imported):
-                store(imported)
-                if imported.isWorking { working.insert(imported.key) }
+    private func rememberLink(hapiID: String, localKey: String) {
+        if let link = (try? modelContext.fetch(FetchDescriptor<HAPISessionLink>(
+            predicate: #Predicate { $0.hapiID == hapiID })))?.first {
+            link.update(\.localKey, to: localKey)
+        } else {
+            modelContext.insert(HAPISessionLink(hapiID: hapiID, localKey: localKey))
+        }
+    }
+
+    /// Source ownership survives empty reports, disabled syncing and offline restarts.
+    /// An old link alone is not enough: HAPI must actually have imported history.
+    private func restoreSourceChoices() throws {
+        let hapiSource = AgentSource.hapi.rawValue
+        let imported = try modelContext.fetch(FetchDescriptor<AgentSession>(
+            predicate: #Predicate { $0.sourceRaw == hapiSource }))
+        let importedKeys = Set(imported.map(\.key))
+        var links = try modelContext.fetch(FetchDescriptor<HAPISessionLink>())
+        let legacy = try modelContext.fetch(FetchDescriptor<AgentSession>(
+            predicate: #Predicate { $0.sourceRaw != hapiSource && $0.hapiSessionID != nil }))
+        var nativeKeys = Set<String>()
+        var linkedIDs = Set(links.map(\.hapiID))
+        for session in legacy {
+            guard let id = session.hapiSessionID, importedKeys.contains("hapi:\(id)") else { continue }
+            nativeKeys.insert(session.key)
+            if linkedIDs.insert(id).inserted {
+                let link = HAPISessionLink(hapiID: id, localKey: session.key)
+                modelContext.insert(link)
+                links.append(link)
             }
         }
-        try? modelContext.save()
-        agents.setRemoteLive(working)
-        agents.spansChanged()
+        let owned = links.filter { importedKeys.contains("hapi:\($0.hapiID)") }
+        let keys = Array(Set(owned.map(\.localKey)))
+        let native = keys.isEmpty ? [] : try modelContext.fetch(FetchDescriptor<AgentSession>(
+            predicate: #Predicate { keys.contains($0.key) }))
+        let byKey = Dictionary(native.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        for link in owned {
+            nativeKeys.insert(link.localKey)
+            byKey[link.localKey]?.update(\.hapiSessionID, to: link.hapiID)
+        }
+        try agents.preferHAPIHistory(for: nativeKeys)
+        try modelContext.save()
     }
 
     /// Replaces the spans of the turns HAPI reported; older turns stay as they were.
-    private func store(_ imported: HAPIImporter.Session) {
-        let fileKey = imported.key
-        let ids = imported.turnIDs
+    private func replaceSpans(_ pieces: [HAPIImporter.Piece], sessionKey: String, turnIDs: [String]) {
+        let fileKey = sessionKey
+        let ids = turnIDs
         let existing = (try? modelContext.fetch(FetchDescriptor<AgentSpan>(
             predicate: #Predicate { $0.fileKey == fileKey && ids.contains($0.turnID) }))) ?? []
         var stale = Dictionary(existing.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var indexByTurn: [String: Int] = [:]
-        for piece in imported.pieces {
+        for piece in pieces {
             let index = indexByTurn[piece.turnID, default: 0]
             indexByTurn[piece.turnID] = index + 1
             let key = "\(piece.turnID)#\(index)"
@@ -251,13 +294,16 @@ public final class HAPISync {
                 span.update(\.isOpen, to: piece.isOpen)
                 span.update(\.waitedOnUser, to: piece.waitedOnUser)
             } else {
-                modelContext.insert(AgentSpan(key: key, sessionKey: imported.key, turnID: piece.turnID, fileKey: fileKey,
+                modelContext.insert(AgentSpan(key: key, sessionKey: sessionKey, turnID: piece.turnID, fileKey: fileKey,
                                               turnStart: piece.turnStart, start: piece.start, end: piece.end, isOpen: piece.isOpen,
                                               trigger: piece.trigger, isSubagent: false, waitedOnUser: piece.waitedOnUser))
             }
         }
         for span in stale.values { modelContext.delete(span) }
+    }
 
+    private func store(_ imported: HAPIImporter.Session) {
+        replaceSpans(imported.pieces, sessionKey: imported.key, turnIDs: imported.turnIDs)
         let key = imported.key
         let last = imported.pieces.map(\.end).max()
         let session = (try? modelContext.fetch(FetchDescriptor<AgentSession>(predicate: #Predicate { $0.key == key })))?.first ?? {

@@ -83,8 +83,10 @@ final class AppModel {
             await refreshNotificationPermission()
         }
         tracker.start()
-        agents.start()
-        hapi.start()
+        Task {
+            await hapi.start()
+            agents.start()
+        }
         reaskBrowsingSitesOnce()
         classifier.retryPending()
         describeTimeEntriesPeriodically()

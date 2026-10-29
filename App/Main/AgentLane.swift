@@ -7,6 +7,7 @@ enum AgentStyle {
         switch flavor {
         case "claude": "Claude Code"
         case "codex": "Codex"
+        case "pi": "pi"
         case "opencode": "OpenCode"
         case "copilot": "Copilot"
         default: flavor.prefix(1).uppercased() + flavor.dropFirst()
@@ -17,6 +18,7 @@ enum AgentStyle {
         switch flavor {
         case "claude": Color(hex: "#D97757")
         case "codex": Color(hex: "#10A37F")
+        case "pi": Color(hex: "#8B5CF6")
         case "cursor": Color(hex: "#6E7BF2")
         case "gemini": Color(hex: "#4C8DF6")
         default: .gray
@@ -27,6 +29,7 @@ enum AgentStyle {
         switch flavor {
         case "claude": "sparkle"
         case "codex": "chevron.left.forwardslash.chevron.right"
+        case "pi": "terminal"
         default: "cpu"
         }
     }

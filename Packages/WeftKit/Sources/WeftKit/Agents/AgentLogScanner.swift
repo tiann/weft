@@ -7,6 +7,7 @@ public struct AgentLogRoots: Sendable, Equatable {
     /// One small JSON file per running Claude Code process, with its status.
     public var claudeSessions: URL
     public var codexSessions: URL
+    public var piSessions: URL
     /// Codex's thread names, one JSON line per rename.
     public var codexIndex: URL
 
@@ -14,6 +15,7 @@ public struct AgentLogRoots: Sendable, Equatable {
         claudeProjects = home.appending(path: ".claude/projects", directoryHint: .isDirectory)
         claudeSessions = home.appending(path: ".claude/sessions", directoryHint: .isDirectory)
         codexSessions = home.appending(path: ".codex/sessions", directoryHint: .isDirectory)
+        piSessions = home.appending(path: ".pi/agent/sessions", directoryHint: .isDirectory)
         codexIndex = home.appending(path: ".codex/session_index.jsonl")
     }
 
@@ -70,7 +72,7 @@ public struct AgentLogScanner: Sendable {
     // MARK: Finding logs
 
     /// Logs modified since `date`.
-    public func discover(claude: Bool, codex: Bool, modifiedSince date: Date) -> [AgentLogFile] {
+    public func discover(claude: Bool, codex: Bool, pi: Bool = false, modifiedSince date: Date) -> [AgentLogFile] {
         var paths: [String] = []
         let manager = FileManager.default
         if claude {
@@ -99,6 +101,15 @@ public struct AgentLogScanner: Sendable {
                 }
             }
         }
+        if pi {
+            let root = roots.piSessions.path(percentEncoded: false)
+            for project in (try? manager.contentsOfDirectory(atPath: root)) ?? [] {
+                let folder = (root as NSString).appendingPathComponent(project)
+                for name in (try? manager.contentsOfDirectory(atPath: folder)) ?? [] where name.hasSuffix(".jsonl") {
+                    paths.append((folder as NSString).appendingPathComponent(name))
+                }
+            }
+        }
         return paths.compactMap(file(at:)).filter { $0.modified >= date }
     }
 
@@ -116,12 +127,15 @@ public struct AgentLogScanner: Sendable {
         guard path.hasSuffix(".jsonl") else { return nil }
         let claudeRoot = roots.claudeProjects.path(percentEncoded: false)
         let codexRoot = roots.codexSessions.path(percentEncoded: false)
+        let piRoot = roots.piSessions.path(percentEncoded: false)
         if let relative = Self.relative(path, to: claudeRoot) {
             let parts = relative.split(separator: "/")
             if parts.count == 2 { return .claudeMain }
             if parts.count == 4, parts[2] == "subagents", parts[3].hasPrefix("agent-") { return .claudeSubagent }
         } else if Self.relative(path, to: codexRoot) != nil, (path as NSString).lastPathComponent.hasPrefix("rollout-") {
             return .codex
+        } else if let relative = Self.relative(path, to: piRoot), relative.split(separator: "/").count == 2 {
+            return .pi
         }
         return nil
     }
@@ -143,13 +157,48 @@ public struct AgentLogScanner: Sendable {
             // rollout-2026-10-28T20-59-24-<thread id>.jsonl; the root thread comes from the first line.
             let name = url.deletingPathExtension().lastPathComponent
             return "codex:" + String(name.suffix(36))
+        case .pi:
+            return "pi:" + String(url.deletingPathExtension().lastPathComponent.suffix(36))
         }
     }
 
     // MARK: Reading
 
-    /// Reads `job.file` from `job.offset` to its end.
-    public func scan(_ job: Job) -> Result? {
+    /// Reads only the identity header, never messages, before deciding whether HAPI owns a log.
+    /// Codex subagents identify their root session here, not in the filename.
+    private func headerMetadata(for file: AgentLogFile) -> AgentLogMeta? {
+        guard let handle = FileHandle(forReadingAtPath: file.path) else { return nil }
+        defer { try? handle.close() }
+        var data = Data()
+        while let chunk = try? handle.read(upToCount: 16 * 1024), !chunk.isEmpty {
+            data.append(chunk)
+            guard let newline = data.firstIndex(of: 10) else { continue }
+            return data.prefix(upTo: newline).withUnsafeBytes { line in
+                switch file.kind {
+                case .codex:
+                    var parser = CodexLogParser(startsAtBeginning: true)
+                    parser.consume(line, offset: 0)
+                    return parser.meta
+                case .pi:
+                    var parser = PiLogParser()
+                    parser.consume(line, offset: 0)
+                    return parser.meta
+                default: return nil
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Reads `job.file` from `job.offset` to its end, unless HAPI owns the session.
+    public func scan(_ job: Job, excluding sessionKeys: Set<String> = []) -> Result? {
+        if sessionKeys.contains(job.sessionKey ?? sessionKey(for: job.file)) { return nil }
+        let header = job.file.kind == .codex || (job.file.kind == .pi && !sessionKeys.isEmpty)
+            ? headerMetadata(for: job.file) : nil
+        if let id = header?.sessionID {
+            let prefix = job.file.kind == .codex ? "codex:" : "pi:"
+            if sessionKeys.contains(prefix + id) { return nil }
+        }
         guard let handle = FileHandle(forReadingAtPath: job.file.path) else { return nil }
         defer { try? handle.close() }
         do {
@@ -160,26 +209,52 @@ public struct AgentLogScanner: Sendable {
         let consumedTo: Int64
         let events: [AgentLogEvent]
         var meta: AgentLogMeta
+        var pendingPiEnd = false
         switch job.file.kind {
         case .claudeMain, .claudeSubagent:
             var parser = ClaudeCodeLogParser(isSubagentLog: job.file.kind == .claudeSubagent)
             consumedTo = read(handle, from: job.offset, into: &parser)
             (events, meta) = (parser.events, parser.meta)
         case .codex:
-            var parser = CodexLogParser(startsAtBeginning: job.offset == 0)
+            var parser = CodexLogParser(startsAtBeginning: job.offset == 0, meta: header ?? AgentLogMeta())
             consumedTo = read(handle, from: job.offset, into: &parser)
             (events, meta) = (parser.events, parser.meta)
+        case .pi:
+            // Recover header and early title before parsing resumed events. Bound the prefix
+            // read; only metadata lines are decoded and no prompt content is retained.
+            var prefix = PiLogParser()
+            if job.offset > 0, let header = FileHandle(forReadingAtPath: job.file.path) {
+                defer { try? header.close() }
+                if let data = try? header.read(upToCount: Int(min(job.offset, 64 * 1024))) {
+                    _ = JSONLines.forEachLine(in: data, base: 0) { line, offset in
+                        if JSONLines.hasPrefix(line, #"{"type":"session","#) || JSONLines.hasPrefix(line, #"{"type":"session_info","#) {
+                            prefix.consume(line, offset: offset)
+                        }
+                    }
+                }
+            }
+            var recovered = prefix.meta
+            if recovered.sessionID == nil {
+                recovered.sessionID = String((job.sessionKey ?? sessionKey(for: job.file)).dropFirst("pi:".count))
+            }
+            recovered.titleFromPrefix = recovered.title != nil
+            var parser = PiLogParser(meta: recovered, forkedAt: prefix.forkedAt)
+            consumedTo = read(handle, from: job.offset, into: &parser)
+            parser.finish()
+            pendingPiEnd = parser.endedTentatively
+            (events, meta) = (parser.events, parser.meta)
         }
-
         var key = job.sessionKey ?? sessionKey(for: job.file)
         if job.file.kind == .codex, let root = meta.sessionID { key = "codex:" + root }
+        if job.file.kind == .pi, let id = meta.sessionID { key = "pi:" + id }
         if job.file.kind == .claudeSubagent { meta.isSubagent = true }
         guard !meta.skip else {
             return Result(file: job.file, offset: job.offset, sessionKey: key, meta: meta, turns: [], resumeOffset: job.file.size)
         }
         let turns = AgentTurnBuilder.turns(events, config: config)
+        let resume = pendingPiEnd ? (turns.last?.offset ?? consumedTo) : AgentTurnBuilder.resumeOffset(turns, consumedTo: consumedTo)
         return Result(file: job.file, offset: job.offset, sessionKey: key, meta: meta, turns: turns,
-                      resumeOffset: AgentTurnBuilder.resumeOffset(turns, consumedTo: consumedTo))
+                      resumeOffset: resume)
     }
 
     /// Feeds whole lines to `parser` in chunks, stopping early once it says to skip the file.
@@ -205,6 +280,7 @@ protocol AgentLogParsing {
 
 extension ClaudeCodeLogParser: AgentLogParsing {}
 extension CodexLogParser: AgentLogParsing {}
+extension PiLogParser: AgentLogParsing {}
 
 // MARK: - Side files
 

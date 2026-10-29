@@ -444,12 +444,13 @@ private struct AgentSettings: View {
             Section {
                 Toggle("Show when coding agents work for me", isOn: $prefs.agentTrackingEnabled)
             } footer: {
-                Text("Weft reads the session logs Claude Code and Codex keep on this Mac to see when each agent was working. It keeps only session titles, project folders and times; prompts and replies are never stored or sent anywhere.")
+                Text("Weft uses HAPI history when available, otherwise reads the session logs Claude Code, Codex and pi keep on this Mac. It keeps only session titles, project folders and times; prompts and replies are never stored or sent anywhere.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("Agents") {
                 source("Claude Code", flavor: "claude", folder: AgentLogRoots.standard.claudeProjects, isOn: $prefs.agentClaudeEnabled)
                 source("Codex", flavor: "codex", folder: AgentLogRoots.standard.codexSessions, isOn: $prefs.agentCodexEnabled)
+                source("pi", flavor: "pi", folder: AgentLogRoots.standard.piSessions, isOn: $prefs.agentPiEnabled)
             }
             .disabled(!prefs.agentTrackingEnabled)
             Section {
@@ -480,7 +481,7 @@ private struct AgentSettings: View {
             } header: {
                 Text("HAPI")
             } footer: {
-                Text("Agents HAPI runs on your other machines, and ones Weft can't read here, come from your HAPI hub through `hapi usage`. Sessions on this Mac whose logs Weft reads anyway aren't counted twice.")
+                Text("For sessions recorded by your HAPI hub, Weft uses only HAPI history and skips local logs. Saved HAPI history stays authoritative when syncing is off or unavailable; other sessions use local logs.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .disabled(!prefs.agentTrackingEnabled)
@@ -525,7 +526,7 @@ private struct AgentSettings: View {
             } header: {
                 Text("History")
             } footer: {
-                Text("An agent works from your prompt until it answers. Time it spends waiting for your permission or your answer to a question is left out, and so is any longer stretch with nothing in its log.")
+                Text("HAPI history follows the turns and waits reported by your hub. For local-log sessions, work runs from your prompt until the answer, excluding permission waits and long silences. Read Again rebuilds only local-log history.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .disabled(!prefs.agentTrackingEnabled)
@@ -536,7 +537,12 @@ private struct AgentSettings: View {
     private func source(_ name: String, flavor: String, folder: URL, isOn: Binding<Bool>) -> some View {
         let path = folder.path(percentEncoded: false)
         let found = FileManager.default.fileExists(atPath: path)
-        let count = sessions.filter { $0.flavor == flavor }.count
+        let imported = Set(sessions.filter { $0.source == .hapi }.map(\.key))
+        let count = sessions.filter { session in
+            guard session.flavor == flavor else { return false }
+            if session.source != .hapi, let id = session.hapiSessionID, imported.contains("hapi:\(id)") { return false }
+            return true
+        }.count
         return Toggle(isOn: isOn) {
             Label {
                 Text(name)

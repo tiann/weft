@@ -97,6 +97,38 @@ enum Claude {
     }
 }
 
+/// pi session lines, with type first as on disk.
+enum Pi {
+    static func line(_ type: String, _ fields: [String: Any]) -> String {
+        #"{"type":""# + type + #"","# + Fixture.json(fields).dropFirst()
+    }
+    static func header() -> String { line("session", ["id": "session-1", "cwd": "/Users/me/project", "version": 3]) }
+    static func title(_ name: String) -> String { line("session_info", ["name": name]) }
+    static func message(_ role: String, at seconds: Double, id: String, fields: [String: Any] = [:]) -> String {
+        var message = fields
+        message["role"] = role
+        return line("message", ["id": id, "timestamp": Fixture.iso(seconds), "message": message])
+    }
+    static func prompt(at seconds: Double, id: String) -> String {
+        message("user", at: seconds, id: id, fields: ["content": [["type": "text", "text": "Hello"]]])
+    }
+    static func assistant(at seconds: Double, stop: String, requestAt: Double? = nil) -> String {
+        var fields: [String: Any] = ["stopReason": stop, "content": []]
+        if let requestAt { fields["timestamp"] = Fixture.date(requestAt).timeIntervalSince1970 * 1000 }
+        return message("assistant", at: seconds, id: "a\(seconds)", fields: fields)
+    }
+    static func question(at seconds: Double, duration: Double) -> String {
+        message("toolResult", at: seconds, id: "result", fields: ["toolName": "ask_user_question", "durationMs": duration * 1000])
+    }
+    static func custom(_ type: String, at seconds: Double) -> String {
+        line("custom_message", ["customType": type, "id": "custom-\(seconds)", "timestamp": Fixture.iso(seconds)])
+    }
+    static func parse(_ lines: [String]) -> (events: [AgentLogEvent], meta: AgentLogMeta, turns: [AgentTurn]) {
+        let parsed = PiLogParser.parse(Fixture.lines(lines))
+        return (parsed.events, parsed.meta, AgentTurnBuilder.turns(parsed.events))
+    }
+}
+
 /// Codex rollout lines.
 enum Codex {
     private static func line(_ seconds: Double, ordinal: Int, type: String, payload: [String: Any]) -> String {
