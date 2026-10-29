@@ -30,6 +30,14 @@ struct DayTimeline: View {
     private let spacing: CGFloat = 12
     /// Between streams side by side.
     private let gutter: CGFloat = 6
+    /// Columns stay at least this wide: what doesn't fit is folded into a strip at the right.
+    private let minimumColumnWidth: CGFloat = 160
+    private let foldColumn: CGFloat = 28
+    /// What didn't fit, listed when its strip is clicked.
+    private let foldRowHeight: CGFloat = 48
+    /// A block widens into at most this many columns, so a short one beside nothing doesn't
+    /// look like the day's main event.
+    private let maxSpan = 2
     /// Shown unchanged while not live (see `Liveness`), now line included.
     @State private var shown = Memo<Arrangement>()
 
@@ -47,7 +55,10 @@ struct DayTimeline: View {
         var now: Date
         var items: [Item]
         var scale: Scale
-        var placed: [Placed]
+        /// Each item's drawn extent, minimum height included, so text never overlaps.
+        var extents: [DateInterval]
+        /// Each agent's spans, relative to the top of its block.
+        var pieces: [[ClosedRange<CGFloat>]]
         var hidden: Int
         var hiddenAgents: Int
     }
@@ -59,13 +70,20 @@ struct DayTimeline: View {
         let items = entries.map { Item.stream($0, isLive: $0.id == live?.id) }
             + shownAgents.map { Item.agent($0, isLive: isLive($0, now: now)) }
         let scale = makeScale(items, now: now)
-        return Arrangement(now: now, items: items, scale: scale, placed: layout(items, scale: scale, now: now),
+        let minimumSpan = TimeInterval(minimumHeight / scale.pointsPerHour * 3600)
+        let extents = items.map { DateInterval(start: $0.start, end: max($0.drawnEnd(now: now), $0.start.addingTimeInterval(minimumSpan))) }
+        let pieces = items.map { item -> [ClosedRange<CGFloat>] in
+            guard case .agent(let block, _) = item else { return [] }
+            let top = scale.y(block.start)
+            return block.pieces.map { (scale.y($0.start) - top)...(scale.y($0.end) - top) }
+        }
+        return Arrangement(now: now, items: items, scale: scale, extents: extents, pieces: pieces,
                            hidden: streams.count - entries.count, hiddenAgents: agents.count - shownAgents.count)
     }
 
     private func content(at date: Date) -> some View {
         let arrangement = shown.value(liveness) { arrange(now: date) }
-        let (now, items, scale, placed) = (arrangement.now, arrangement.items, arrangement.scale, arrangement.placed)
+        let (now, items, scale) = (arrangement.now, arrangement.items, arrangement.scale)
         let (hidden, hiddenAgents) = (arrangement.hidden, arrangement.hiddenAgents)
         let height = scale.height
 
@@ -80,14 +98,21 @@ struct DayTimeline: View {
                     HStack(alignment: .top, spacing: spacing) {
                         Color.clear.frame(width: timeColumn, height: height)
                         GeometryReader { proxy in
+                            let layout = layout(arrangement, width: proxy.size.width)
                             ZStack(alignment: .topLeading) {
-                                ForEach(placed, id: \.item.id) { placed in
-                                    let column = (proxy.size.width - CGFloat(placed.columns - 1) * gutter) / CGFloat(placed.columns)
+                                ForEach(layout.placed, id: \.item.id) { placed in
+                                    let column = (layout.width - CGFloat(placed.columns - 1) * gutter) / CGFloat(placed.columns)
                                     let top = scale.y(placed.item.start)
-                                    itemView(placed)
+                                    itemView(placed.item, pieces: placed.pieces)
                                         .frame(width: column * CGFloat(placed.span) + gutter * CGFloat(placed.span - 1),
                                                height: max(minimumHeight, scale.y(placed.item.drawnEnd(now: now)) - top - 3))
                                         .offset(x: CGFloat(placed.column) * (column + gutter), y: top)
+                                }
+                                ForEach(layout.folds, id: \.extent.start) { fold in
+                                    let top = scale.y(fold.extent.start)
+                                    foldView(fold, arrangement: arrangement)
+                                        .frame(width: foldColumn, height: max(minimumHeight, scale.y(fold.extent.end) - top - 3))
+                                        .offset(x: layout.width + gutter, y: top)
                                 }
                             }
                         }
@@ -223,6 +248,21 @@ struct DayTimeline: View {
             }
         }
 
+        var isLive: Bool {
+            switch self {
+            case .stream(_, let isLive), .agent(_, let isLive): isLive
+            }
+        }
+
+        /// What's folded away first when there isn't room: agents with the least work. The
+        /// user's own streams go only after every agent.
+        var priority: Double {
+            switch self {
+            case .stream: .infinity
+            case .agent(let block, _): block.activeTime
+            }
+        }
+
         /// Live streams run up to now.
         func drawnEnd(now: Date) -> Date {
             switch self {
@@ -238,34 +278,81 @@ struct DayTimeline: View {
         var columns: Int
         var span: Int
         /// An agent's spans, relative to the top of its block.
-        var pieces: [ClosedRange<CGFloat>] = []
+        var pieces: [ClosedRange<CGFloat>]
     }
 
-    /// Calendar-style layout: overlapping streams share the width in columns, and each
-    /// widens into columns nothing beside it needs.
-    private func layout(_ items: [Item], scale: Scale, now: Date) -> [Placed] {
-        // Use the drawn extent, including the minimum height, so text never overlaps.
-        let minimumSpan = TimeInterval(minimumHeight / scale.pointsPerHour * 3600)
-        let extents = items.map { DateInterval(start: $0.start, end: max($0.drawnEnd(now: now), $0.start.addingTimeInterval(minimumSpan))) }
-        return zip(items, ColumnLayout.place(extents)).map { item, place in
-            var placed = Placed(item: item, column: place.column, columns: place.columns, span: place.span)
-            if case .agent(let block, _) = item {
-                let top = scale.y(block.start)
-                placed.pieces = block.pieces.map { (scale.y($0.start) - top)...(scale.y($0.end) - top) }
-            }
-            return placed
+    private struct Layout {
+        var placed: [Placed]
+        /// What didn't fit, for the strip at the right.
+        var folds: [ColumnLayout.Fold]
+        /// Left for the columns.
+        var width: CGFloat
+    }
+
+    /// Calendar-style layout in `width`: overlapping streams share it in columns, and each
+    /// widens a little into columns nothing beside it needs. Where columns would get too
+    /// narrow, the agents with the least work are folded away.
+    private func layout(_ arrangement: Arrangement, width: CGFloat) -> Layout {
+        let priorities = arrangement.items.map(\.priority)
+        func place(in width: CGFloat) -> ColumnLayout.Result {
+            ColumnLayout.place(arrangement.extents, priorities: priorities,
+                               maxColumns: Int((width + gutter) / (minimumColumnWidth + gutter)), maxSpan: maxSpan)
         }
+        var width = width
+        var result = place(in: width)
+        if !result.folds.isEmpty {
+            // Again without the strip's room, which may fold a little more.
+            width -= foldColumn + gutter
+            result = place(in: width)
+        }
+        let placed = arrangement.items.indices.compactMap { index in
+            result.placements[index].map {
+                Placed(item: arrangement.items[index], column: $0.column, columns: $0.columns, span: $0.span,
+                       pieces: arrangement.pieces[index])
+            }
+        }
+        return Layout(placed: placed, folds: result.folds, width: width)
     }
 
     @ViewBuilder
-    private func itemView(_ placed: Placed) -> some View {
-        switch placed.item {
+    private func itemView(_ item: Item, pieces: [ClosedRange<CGFloat>]) -> some View {
+        switch item {
         case .stream(let entry, let isLive):
             StreamView(entry: entry, isLive: isLive)
         case .agent(let block, let isLive):
             AgentBlockView(block: block, session: agentSessions[block.sessionKey], isLive: isLive,
-                           pieces: placed.pieces, userSamples: userSamples)
+                           pieces: pieces, userSamples: userSamples)
         }
+    }
+
+    /// Stands in for what didn't fit, and lists it when clicked.
+    private func foldView(_ fold: ColumnLayout.Fold, arrangement: Arrangement) -> some View {
+        let items = fold.items.map { arrangement.items[$0] }
+        let marks = items.map { item -> (symbol: String, color: Color) in
+            switch item {
+            case .stream(let entry, _):
+                return ("circle.fill", model.classifier.category(entry.categoryKey).color)
+            case .agent(let block, _):
+                let flavor = AgentStyle.flavor(agentSessions[block.sessionKey], key: block.sessionKey)
+                return (AgentStyle.symbol(flavor), AgentStyle.color(flavor))
+            }
+        }
+        let end = items.map { $0.drawnEnd(now: arrangement.now) }.max() ?? fold.extent.end
+        return FoldView(marks: marks, start: fold.extent.start, end: end, isLive: items.contains(where: \.isLive)) {
+            ForEach(items, id: \.id) { item in
+                // Drawn like the blocks they stand for, so they open the same way.
+                itemView(item, pieces: rowPieces(item, height: foldRowHeight, now: arrangement.now))
+                    .frame(height: foldRowHeight)
+            }
+        }
+    }
+
+    /// An agent's spans in a row `height` tall rather than to the timeline's scale.
+    private func rowPieces(_ item: Item, height: CGFloat, now: Date) -> [ClosedRange<CGFloat>] {
+        guard case .agent(let block, _) = item else { return [] }
+        let length = max(1, item.drawnEnd(now: now).timeIntervalSince(block.start))
+        func y(_ date: Date) -> CGFloat { CGFloat(date.timeIntervalSince(block.start) / length) * height }
+        return block.pieces.map { y($0.start)...y($0.end) }
     }
 
     private func hiddenText(streams: Int, agents: Int) -> String {
@@ -354,6 +441,8 @@ private struct StreamView: View {
     /// Read from the segments, which keep changing while the stream is live; held still while
     /// not live.
     @State private var read = Memo<(usage: [(name: String, bundleID: String, time: TimeInterval)], fallback: String)>()
+    /// A one-line description keeps at least this much before the times beside it give way.
+    private let titleRoom: CGFloat = 80
 
     var body: some View {
         let category = model.classifier.category(entry.categoryKey)
@@ -365,20 +454,28 @@ private struct StreamView: View {
                 Rectangle().fill(category.color).frame(width: 4)
                 Group {
                     if height < 44 {
-                        // One line: there's no room for the description underneath.
-                        HStack(spacing: 6) {
-                            Text(category.displayName).fontWeight(.semibold).foregroundStyle(category.color)
-                            Text(text.body).foregroundStyle(text.isPlaceholder ? .secondary : .primary)
-                            Spacer(minLength: 4)
-                            Text(timeLabel).foregroundStyle(.secondary).layoutPriority(1)
+                        // One line: there's no room for the description underneath, and the
+                        // times shorten or go before they squeeze it.
+                        ViewThatFits(in: .horizontal) {
+                            line(category, text: text, trailing: timeLabel)
+                            line(category, text: text, trailing: duration)
+                            line(category, text: text, trailing: nil)
                         }
                         .font(.caption)
                         .lineLimit(1)
                     } else {
                         VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(category.displayName).fontWeight(.semibold).foregroundStyle(category.color)
-                                Text(timeLabel).foregroundStyle(.secondary)
+                            // The axis already says when; narrow streams keep the time spent.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 6) {
+                                    categoryName(category)
+                                    Text(timeLabel).foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    categoryName(category)
+                                    Text(duration).foregroundStyle(.secondary)
+                                }
+                                categoryName(category)
                             }
                             .font(.caption)
                             .lineLimit(1)
@@ -395,7 +492,7 @@ private struct StreamView: View {
                                             Image(nsImage: AppIcons.icon(for: item.bundleID)).resizable().frame(width: 12, height: 12)
                                             Text(item.name).lineLimit(1)
                                             Spacer(minLength: 4)
-                                            Text(Format.duration(item.time)).monospacedDigit()
+                                            Text(Format.duration(item.time)).monospacedDigit().layoutPriority(1)
                                         }
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -418,13 +515,29 @@ private struct StreamView: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture { showDetail = true }
-        .help(text.body)
+        .help(text.body + "\n" + timeLabel)
         .popover(isPresented: $showDetail) { StreamDetail(entry: entry, text: text.body) }
     }
 
+    private func categoryName(_ category: CategoryDefinition) -> some View {
+        Text(category.displayName).fontWeight(.semibold).foregroundStyle(category.color)
+    }
+
+    private func line(_ category: CategoryDefinition, text: (body: String, isPlaceholder: Bool), trailing: String?) -> some View {
+        HStack(spacing: 6) {
+            categoryName(category).layoutPriority(1)
+            // Takes the rest of the line, but counts as this wide when choosing what fits.
+            Text(text.body).foregroundStyle(text.isPlaceholder ? .secondary : .primary)
+                .frame(minWidth: 0, idealWidth: titleRoom, maxWidth: .infinity, alignment: .leading)
+            if let trailing { Text(trailing).foregroundStyle(.secondary).layoutPriority(1) }
+        }
+    }
+
+    private var duration: String { Format.duration(entry.activeTime) }
+
     private var timeLabel: String {
         let end = isLive ? String(localized: "now") : entry.end.formatted(date: .omitted, time: .shortened)
-        return "\(entry.start.formatted(date: .omitted, time: .shortened))–\(end) · \(Format.duration(entry.activeTime))"
+        return "\(entry.start.formatted(date: .omitted, time: .shortened))–\(end) · \(duration)"
     }
 
     private func description(fallback: String) -> (body: String, isPlaceholder: Bool) {
@@ -483,6 +596,64 @@ private struct StreamDetail: View {
         }
         .padding(16)
         .frame(width: 380)
+    }
+}
+
+// MARK: - Folds
+
+/// Stands in for blocks there wasn't room for beside the others: how many and which agents,
+/// and a list of them when clicked.
+private struct FoldView<Rows: View>: View {
+    let marks: [(symbol: String, color: Color)]
+    let start: Date
+    let end: Date
+    let isLive: Bool
+    @ViewBuilder let rows: () -> Rows
+    @State private var isHovering = false
+    @State private var showDetail = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 4) {
+                Text(verbatim: "+\(marks.count)").font(.caption.weight(.semibold)).monospacedDigit()
+                ForEach(Array(marks.prefix(max(0, Int((proxy.size.height - 30) / 16))).enumerated()), id: \.offset) { _, mark in
+                    Image(systemName: mark.symbol).font(.caption2).foregroundStyle(mark.color).frame(height: 12)
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .background(Color.secondary.opacity(isHovering ? 0.24 : 0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onTapGesture { showDetail = true }
+        .help(summary)
+        .popover(isPresented: $showDetail) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(summary).font(.headline)
+                    Spacer()
+                    Text(timeLabel).foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                ScrollView {
+                    VStack(spacing: 6) { rows() }
+                }
+                .frame(height: CGFloat(min(marks.count, 7)) * 54 - 6)
+            }
+            .padding(16)
+            .frame(width: 340)
+        }
+    }
+
+    private var summary: String {
+        marks.count == 1 ? String(localized: "1 more at the same time") : String(localized: "\(marks.count) more at the same time")
+    }
+
+    private var timeLabel: String {
+        let end = isLive ? String(localized: "now") : end.formatted(date: .omitted, time: .shortened)
+        return "\(start.formatted(date: .omitted, time: .shortened))–\(end)"
     }
 }
 

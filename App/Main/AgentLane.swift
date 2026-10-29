@@ -62,6 +62,8 @@ struct AgentBlockView: View {
     /// Read from the session, which changes as long as its agent works; held still while not
     /// live.
     @State private var read = Memo<(flavor: String, title: String, details: [(symbol: String, text: String)])>()
+    /// A one-line title keeps at least this much before the times beside it give way.
+    private let titleRoom: CGFloat = 80
 
     var body: some View {
         let (flavor, title, details) = read.value(liveness) {
@@ -88,20 +90,31 @@ struct AgentBlockView: View {
                 .frame(width: 4, height: height, alignment: .topLeading)
                 Group {
                     if height < 44 {
-                        // One line: the icon says which agent, so the title gets the room.
-                        HStack(spacing: 6) {
-                            Image(systemName: AgentStyle.symbol(flavor)).foregroundStyle(color)
-                            Text(title).fontWeight(.medium)
-                            Spacer(minLength: 4)
-                            Text(timeLabel).foregroundStyle(.secondary).layoutPriority(1)
+                        // One line: the icon says which agent, so the title gets the room, and
+                        // the times shorten or go before they squeeze it.
+                        ViewThatFits(in: .horizontal) {
+                            line(flavor, color: color, title: title, trailing: timeLabel)
+                            line(flavor, color: color, title: title, trailing: duration)
+                            line(flavor, color: color, title: title, trailing: nil)
                         }
                         .font(.caption)
                         .lineLimit(1)
                     } else {
                         VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                name(flavor, color: color)
-                                Text(timeLabel).foregroundStyle(.secondary)
+                            // The axis already says when; narrow blocks keep the time worked.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 6) {
+                                    name(flavor, color: color)
+                                    Text(timeLabel).foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    name(flavor, color: color)
+                                    Text(duration).foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    Image(systemName: AgentStyle.symbol(flavor)).foregroundStyle(color)
+                                    Text(duration).foregroundStyle(.secondary)
+                                }
                             }
                             .font(.caption)
                             .lineLimit(1)
@@ -136,7 +149,7 @@ struct AgentBlockView: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture { showDetail = true }
-        .help("\(AgentStyle.name(flavor)): \(title) · \(Format.duration(block.activeTime)) working")
+        .help("\(AgentStyle.name(flavor)): \(title)\n\(times) · \(duration) working")
         .popover(isPresented: $showDetail) {
             AgentBlockDetail(block: block, session: session, isLive: isLive, userSamples: userSamples)
         }
@@ -150,14 +163,29 @@ struct AgentBlockView: View {
         .foregroundStyle(color)
     }
 
-    private var timeLabel: String {
-        let end = isLive ? String(localized: "now") : block.end.formatted(date: .omitted, time: .shortened)
-        return "\(block.start.formatted(date: .omitted, time: .shortened))–\(end) · \(Format.duration(block.activeTime))"
+    private func line(_ flavor: String, color: Color, title: String, trailing: String?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: AgentStyle.symbol(flavor)).foregroundStyle(color)
+            // Takes the rest of the line, but counts as this wide when choosing what fits.
+            Text(title).fontWeight(.medium)
+                .frame(minWidth: 0, idealWidth: titleRoom, maxWidth: .infinity, alignment: .leading)
+            if let trailing { Text(trailing).foregroundStyle(.secondary).layoutPriority(1) }
+        }
     }
+
+    private var times: String {
+        let end = isLive ? String(localized: "now") : block.end.formatted(date: .omitted, time: .shortened)
+        return "\(block.start.formatted(date: .omitted, time: .shortened))–\(end)"
+    }
+
+    private var duration: String { Format.duration(block.activeTime) }
+    private var timeLabel: String { "\(times) · \(duration)" }
 
     private var details: [(symbol: String, text: String)] {
         var rows: [(String, String)] = []
-        if let path = session?.projectPath { rows.append(("folder", (path as NSString).abbreviatingWithTildeInPath)) }
+        // Just the folder's name, which a narrow block would cut off. A session without a
+        // title already shows it as the title.
+        if let path = session?.projectPath, session?.title != nil { rows.append(("folder", (path as NSString).lastPathComponent)) }
         if let host = session?.host { rows.append(("desktopcomputer", host)) }
         let turns = block.turnCount
         if turns > 0 { rows.append(("text.bubble", turns == 1 ? String(localized: "1 prompt") : String(localized: "\(turns) prompts"))) }

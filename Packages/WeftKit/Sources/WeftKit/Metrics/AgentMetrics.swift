@@ -260,31 +260,52 @@ public enum ColumnLayout {
         }
     }
 
+    /// Items left out for lack of room that overlap one another, and the time they cover.
+    public struct Fold: Sendable, Equatable {
+        /// Indexes into the extents, earliest first.
+        public var items: [Int]
+        public var extent: DateInterval
+    }
+
+    public struct Result: Sendable, Equatable {
+        /// Where each item goes, in the same order as the extents; nil for items left out.
+        public var placements: [Placement?]
+        public var folds: [Fold]
+    }
+
     /// Placements for `extents` (the drawn extent of each item, in time), in the same order.
-    /// Earlier and then longer items go further left; each then widens into the columns to
-    /// its right that stay free for as long as it lasts.
-    public static func place(_ extents: [DateInterval]) -> [Placement] {
-        var result = [Placement](repeating: Placement(column: 0, columns: 1), count: extents.count)
+    /// Earlier and then longer items go further left; each then widens into up to
+    /// `maxSpan` columns to its right that stay free for as long as it lasts.
+    ///
+    /// Where more than `maxColumns` items overlap, the ones with the lowest `priorities`
+    /// (later ones on a tie) are left out and returned as folds.
+    public static func place(_ extents: [DateInterval], priorities: [Double]? = nil,
+                             maxColumns: Int = .max, maxSpan: Int = .max) -> Result {
+        var placements = [Placement?](repeating: nil, count: extents.count)
+        var left: [Int] = []
         var cluster: [Int] = []
-        var columnEnds: [Date] = []
-        var clusterEnd = Date.distantPast
+        // Each column's items, in order: the last one is the one still running.
+        var columns: [[Int]] = []
 
         func overlap(_ a: DateInterval, _ b: DateInterval) -> Bool { a.start < b.end && b.start < a.end }
+        func priority(_ index: Int) -> Double { priorities?[index] ?? 0 }
+        func end(_ column: [Int]) -> Date { column.last.map { extents[$0].end } ?? .distantPast }
 
         func flush() {
-            let columns = max(1, columnEnds.count)
+            let count = max(1, columns.count)
             for index in cluster {
-                result[index].columns = columns
-                var span = 1
-                while result[index].column + span < columns, !cluster.contains(where: {
-                    result[$0].column == result[index].column + span && overlap(extents[$0], extents[index])
+                guard var placement = placements[index] else { continue }
+                placement.columns = count
+                placement.span = 1
+                while placement.span < maxSpan, placement.column + placement.span < count, !cluster.contains(where: {
+                    placements[$0]?.column == placement.column + placement.span && overlap(extents[$0], extents[index])
                 }) {
-                    span += 1
+                    placement.span += 1
                 }
-                result[index].span = span
+                placements[index] = placement
             }
             cluster = []
-            columnEnds = []
+            columns = []
         }
 
         let order = extents.indices.sorted {
@@ -292,14 +313,41 @@ public enum ColumnLayout {
         }
         for index in order {
             let extent = extents[index]
-            if extent.start >= clusterEnd { flush() }
-            let column = columnEnds.firstIndex { $0 <= extent.start } ?? columnEnds.count
-            if column == columnEnds.count { columnEnds.append(extent.end) } else { columnEnds[column] = extent.end }
-            result[index].column = column
+            if extent.start >= columns.map(end).max() ?? .distantPast { flush() }
+            if let column = columns.firstIndex(where: { end($0) <= extent.start }) {
+                columns[column].append(index)
+                placements[index] = Placement(column: column, columns: 1)
+            } else if columns.count < max(1, maxColumns) {
+                columns.append([index])
+                placements[index] = Placement(column: columns.count - 1, columns: 1)
+            } else {
+                // No room: leave out whichever matters least, this item or one running beside
+                // it. Taking that one's place is safe, as its column was free when it started.
+                guard let column = columns.indices.reversed().min(by: { priority(columns[$0].last!) < priority(columns[$1].last!) }),
+                      let other = columns[column].last, priority(other) < priority(index) else {
+                    left.append(index)
+                    continue
+                }
+                columns[column].removeLast()
+                placements[other] = nil
+                left.append(other)
+                columns[column].append(index)
+                placements[index] = Placement(column: column, columns: 1)
+            }
             cluster.append(index)
-            clusterEnd = max(clusterEnd, extent.end)
         }
         flush()
-        return result
+
+        var folds: [Fold] = []
+        for index in left.sorted(by: { extents[$0].start < extents[$1].start }) {
+            if var fold = folds.last, extents[index].start < fold.extent.end {
+                fold.items.append(index)
+                fold.extent = DateInterval(start: fold.extent.start, end: max(fold.extent.end, extents[index].end))
+                folds[folds.count - 1] = fold
+            } else {
+                folds.append(Fold(items: [index], extent: extents[index]))
+            }
+        }
+        return Result(placements: placements, folds: folds)
     }
 }

@@ -135,7 +135,7 @@ struct AgentMetricsTests {
     }
 
     @Test func columnsSplitOnlyWhereThingsOverlap() {
-        let placements = ColumnLayout.place([interval(0, 30), interval(10, 30), interval(50, 10), interval(20, 5)])
+        let placements = ColumnLayout.place([interval(0, 30), interval(10, 30), interval(50, 10), interval(20, 5)]).placements
         #expect(placements[0] == ColumnLayout.Placement(column: 0, columns: 3))
         #expect(placements[1] == ColumnLayout.Placement(column: 1, columns: 3))
         #expect(placements[3] == ColumnLayout.Placement(column: 2, columns: 3))
@@ -145,23 +145,60 @@ struct AgentMetricsTests {
     @Test func itemsWidenIntoColumnsNothingElseNeeds() {
         // A long stream, a long agent run beside it, and two short runs that each need a
         // third column for a while.
-        let placements = ColumnLayout.place([interval(0, 120), interval(10, 100), interval(20, 10), interval(60, 10)])
-        #expect(placements.map(\.columns) == [3, 3, 3, 3])
+        let placements = ColumnLayout.place([interval(0, 120), interval(10, 100), interval(20, 10), interval(60, 10)]).placements
+        #expect(placements.map { $0?.columns } == [3, 3, 3, 3])
         #expect(placements[0] == ColumnLayout.Placement(column: 0, columns: 3, span: 1))
         #expect(placements[1] == ColumnLayout.Placement(column: 1, columns: 3, span: 1))
         #expect(placements[2] == ColumnLayout.Placement(column: 2, columns: 3, span: 1))
         #expect(placements[3] == ColumnLayout.Placement(column: 2, columns: 3, span: 1))
 
-        let staggered = ColumnLayout.place([interval(0, 60), interval(0, 20), interval(10, 10), interval(30, 20)])
+        let staggered = ColumnLayout.place([interval(0, 60), interval(0, 20), interval(10, 10), interval(30, 20)]).placements
         // The second column is free after minute 20, so the run from minute 30 takes it and
         // the third column too.
         #expect(staggered[3] == ColumnLayout.Placement(column: 1, columns: 3, span: 2))
-        #expect(staggered[1].span == 1)
+        #expect(staggered[1]?.span == 1)
     }
 
     @Test func longerItemsGoLeftWhenTheyStartTogether() {
-        let placements = ColumnLayout.place([interval(0, 10), interval(0, 60)])
-        #expect(placements[1].column == 0)
-        #expect(placements[0].column == 1)
+        let placements = ColumnLayout.place([interval(0, 10), interval(0, 60)]).placements
+        #expect(placements[1]?.column == 0)
+        #expect(placements[0]?.column == 1)
+    }
+
+    @Test func widensOnlyAsFarAsAllowed() {
+        // Three columns for a while, then one run alone beside the long stream.
+        let extents = [interval(0, 120), interval(0, 20), interval(0, 20), interval(30, 60)]
+        #expect(ColumnLayout.place(extents).placements[3] == ColumnLayout.Placement(column: 1, columns: 3, span: 2))
+        #expect(ColumnLayout.place(extents, maxSpan: 1).placements[3] == ColumnLayout.Placement(column: 1, columns: 3, span: 1))
+    }
+
+    @Test func leavesOutWhatMattersLeastWhenColumnsRunOut() {
+        // A stream and three agent runs at once, with room for three: the run with the least
+        // work is left out, even though it started before another.
+        let extents = [interval(0, 120), interval(10, 60), interval(20, 15), interval(30, 40)]
+        let result = ColumnLayout.place(extents, priorities: [.infinity, 60, 15, 40], maxColumns: 3)
+        #expect(result.placements[2] == nil)
+        #expect(result.placements[0] == ColumnLayout.Placement(column: 0, columns: 3))
+        #expect(result.placements[1] == ColumnLayout.Placement(column: 1, columns: 3))
+        // It takes the column the left-out run had.
+        #expect(result.placements[3] == ColumnLayout.Placement(column: 2, columns: 3))
+        #expect(result.folds == [ColumnLayout.Fold(items: [2], extent: interval(20, 15))])
+
+        // With equal priorities, the later one is left out.
+        let even = ColumnLayout.place([interval(0, 30), interval(10, 30)], maxColumns: 1)
+        #expect(even.placements[0] == ColumnLayout.Placement(column: 0, columns: 1))
+        #expect(even.placements[1] == nil)
+    }
+
+    @Test func overlappingLeftOutItemsFoldTogether() {
+        let extents = [interval(0, 120), interval(10, 20), interval(20, 20), interval(80, 10)]
+        let result = ColumnLayout.place(extents, priorities: [100, 20, 20, 10], maxColumns: 1)
+        #expect(result.placements.map { $0 != nil } == [true, false, false, false])
+        #expect(result.folds == [
+            ColumnLayout.Fold(items: [1, 2], extent: interval(10, 30)),
+            ColumnLayout.Fold(items: [3], extent: interval(80, 10)),
+        ])
+        // Nothing overlaps: nothing to leave out.
+        #expect(ColumnLayout.place([interval(0, 10), interval(10, 10)], maxColumns: 1).folds.isEmpty)
     }
 }
