@@ -498,7 +498,8 @@ struct HAPISyncTests {
     }
 
     @Test func failedSyncStopsLiveExtrapolationWithoutSwitchingSources() async throws {
-        let now = Date.now
+        // A whole second, so going through milliseconds in the report comes back exact.
+        let now = Date(timeIntervalSince1970: Date.now.timeIntervalSince1970.rounded(.down))
         let t = now.timeIntervalSince(Fixture.date(0))
         answerPi(turns: [(t - 60, nil)])
         await sync.sync(now: now)
