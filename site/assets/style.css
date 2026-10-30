@@ -83,6 +83,8 @@ code { font-family: var(--mono); font-size: 0.88em; padding: 0.12em 0.4em; borde
 .nav-links a:hover, .nav-lang:hover, .nav-gh:hover { color: var(--text); }
 .nav-right { display: flex; align-items: center; gap: 18px; margin-left: auto; font-size: 14.5px; color: var(--muted); }
 .nav-gh svg { width: 20px; height: 20px; }
+/* Without script there's no telling the platform, so the button stays. */
+.js:not(.mac) .nav-download { display: none; }
 
 /* MARK: Buttons */
 
@@ -438,7 +440,7 @@ footer.site { border-top: 1px solid var(--line); padding: 36px 0 48px; font-size
   .pillar { padding: 20px 18px; }
   .pillar b { font-size: 22px; }
   .pillar span { font-size: 13.5px; }
-  .nav-right .nav-gh { display: none; }
+  :is(.mac, html:not(.js)) .nav-right .nav-gh { display: none; }
   .btn:not(.btn-small) { height: 46px; padding: 0 20px; font-size: 15px; }
   .thread.short span { display: none; }
   .fine span { display: block; }

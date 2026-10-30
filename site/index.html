@@ -18,7 +18,11 @@
   <meta property="og:image" content="https://weftapp.org/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="assets/style.css">
-  <script>document.documentElement.classList.add('js')</script>
+  <script>
+    document.documentElement.classList.add('js');
+    // Weft only runs on a Mac, so the nav offers the download only there. iPads also say MacIntel, but take touch.
+    if (/^Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2) document.documentElement.classList.add('mac');
+  </script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -36,7 +40,7 @@
       <div class="nav-right">
         <a class="nav-lang" href="zh/" hreflang="zh-Hans" lang="zh-Hans">中文</a>
         <a class="nav-gh" href="https://github.com/tiann/weft" aria-label="Weft on GitHub"><svg class="i"><use href="assets/icons.svg#github"/></svg></a>
-        <a class="btn btn-primary btn-small" href="https://github.com/tiann/weft/releases/latest"><svg class="i"><use href="assets/icons.svg#download"/></svg>Download</a>
+        <a class="btn btn-primary btn-small nav-download" href="https://github.com/tiann/weft/releases/latest"><svg class="i"><use href="assets/icons.svg#download"/></svg>Download</a>
       </div>
     </div>
   </header>
