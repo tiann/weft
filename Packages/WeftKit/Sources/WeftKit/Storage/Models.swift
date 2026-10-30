@@ -132,6 +132,8 @@ public final class AIClassificationRecord {
     public var categoryKey: String
     public var confidenceRaw: String
     public var createdAt: Date
+    /// The user looked at this answer in Review and kept it, so Review stops listing it.
+    public var reviewed: Bool = false
 
     public init(key: String, categoryKey: String, confidence: AIConfidence) {
         self.key = key

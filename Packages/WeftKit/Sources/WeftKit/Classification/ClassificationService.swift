@@ -13,6 +13,8 @@ public final class ClassificationService {
     public private(set) var aiAvailability: AIAvailability
     /// Number of distinct apps/sites waiting for the model.
     public private(set) var queuedCount = 0
+    /// Classification keys whose model answer the user kept in Review.
+    public private(set) var reviewedKeys: Set<String> = []
 
     @ObservationIgnored private let modelContext: ModelContext
     @ObservationIgnored private let ai: any AIClassifying
@@ -91,6 +93,19 @@ public final class ClassificationService {
         cache[key]?.confidence
     }
 
+    /// Keeps the model's answers for `keys` without making rules, which would crowd the
+    /// Rules page, and takes them off Review. Keys without an answer are skipped.
+    public func markReviewed(_ keys: some Sequence<String>) {
+        let keys = Array(Set(keys).filter { cache[$0] != nil && !reviewedKeys.contains($0) })
+        guard !keys.isEmpty else { return }
+        let records = (try? modelContext.fetch(FetchDescriptor<AIClassificationRecord>(
+            predicate: #Predicate { keys.contains($0.key) }
+        ))) ?? []
+        for record in records { record.reviewed = true }
+        try? modelContext.save()
+        reviewedKeys.formUnion(records.map(\.key))
+    }
+
     /// Picks up the model becoming available or unavailable, e.g. Apple Intelligence being
     /// turned on in System Settings.
     public func refreshAvailability() {
@@ -161,9 +176,9 @@ public final class ClassificationService {
     /// confirmed yet, e.g. after it started getting more than one page title per site.
     public func reaskSites(filedAs categoryKey: String) {
         let ai = ClassificationSource.ai.rawValue
-        let segments = (try? modelContext.fetch(FetchDescriptor<ActivitySegment>(
+        let segments = ((try? modelContext.fetch(FetchDescriptor<ActivitySegment>(
             predicate: #Predicate { $0.classificationSourceRaw == ai && $0.categoryKey == categoryKey && $0.domain != nil }
-        ))) ?? []
+        ))) ?? []).filter { !reviewedKeys.contains($0.classificationKey) }
         for key in Set(segments.map(\.classificationKey)) {
             cache[key] = nil
             for record in (try? modelContext.fetch(FetchDescriptor<AIClassificationRecord>(predicate: #Predicate { $0.key == key }))) ?? [] {
@@ -204,6 +219,11 @@ public final class ClassificationService {
     private func store(_ result: AIClassification, forKey key: String) {
         cache[key] = result
         if let existing = try? modelContext.fetch(FetchDescriptor<AIClassificationRecord>(predicate: #Predicate { $0.key == key })).first {
+            // The user kept the old answer, not this one.
+            if existing.categoryKey != result.categoryKey {
+                existing.reviewed = false
+                reviewedKeys.remove(key)
+            }
             existing.categoryKey = result.categoryKey
             existing.confidenceRaw = result.confidence.rawValue
         } else {
@@ -227,6 +247,7 @@ public final class ClassificationService {
         let records = (try? modelContext.fetch(FetchDescriptor<AIClassificationRecord>())) ?? []
         cache = Dictionary(records.map { ($0.key, AIClassification(categoryKey: $0.categoryKey, confidence: $0.confidence)) },
                            uniquingKeysWith: { a, _ in a })
+        reviewedKeys = Set(records.filter(\.reviewed).map(\.key))
     }
 
     // MARK: User corrections

@@ -23,8 +23,8 @@ struct MainView: View {
     }
 
     var body: some View {
-        // Apps and sites waiting in Review.
-        let reviewCount = badge.value(liveness) { Set(unconfirmed.map(\.classificationKey)).count }
+        // Apps and sites waiting in Review, apart from the briefly used ones.
+        let reviewCount = badge.value(liveness) { ReviewList.count(unconfirmed, reviewed: model.classifier.reviewedKeys) }
         NavigationSplitView {
             List(Page.allCases, id: \.self, selection: Binding<Page?>(
                 get: { model.page },

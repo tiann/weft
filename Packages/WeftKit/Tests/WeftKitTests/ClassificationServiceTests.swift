@@ -240,4 +240,56 @@ struct ClassificationServiceTests {
         #expect(confirmed.classificationSource == .rule)
         #expect(service.classify(site) == ("finance", .ai))
     }
+
+    @Test func reviewedAnswersAreKeptWithoutRules() {
+        context.insert(AIClassificationRecord(key: "com.google.Chrome|broker.example.com", categoryKey: "finance", confidence: .medium))
+        try? context.save()
+        let service = ClassificationService(modelContext: context, ai: FakeAI(answer: .init(categoryKey: "code", confidence: .high)))
+
+        // Only keys with an answer can be reviewed.
+        service.markReviewed(["com.google.Chrome|broker.example.com", "com.example.Unknown"])
+        #expect(service.reviewedKeys == ["com.google.Chrome|broker.example.com"])
+        #expect(service.userRules.isEmpty)
+        let site = ActivityContext(bundleID: "com.google.Chrome", appName: "Google Chrome", url: "https://broker.example.com/")
+        #expect(service.classify(site) == ("finance", .ai))
+
+        let reopened = ClassificationService(modelContext: context, ai: FakeAI(answer: .init(categoryKey: "code", confidence: .high)))
+        #expect(reopened.reviewedKeys == ["com.google.Chrome|broker.example.com"])
+    }
+
+    @Test func reviewedSitesAreNotAskedAgain() async {
+        let ai = FakeAI(answer: .init(categoryKey: "finance", confidence: .high))
+        context.insert(AIClassificationRecord(key: "com.google.Chrome|kept.example.com", categoryKey: "browsing", confidence: .medium))
+        try? context.save()
+        let service = ClassificationService(modelContext: context, ai: ai)
+        let kept = ActivitySegment(context: ActivityContext(bundleID: "com.google.Chrome", appName: "Google Chrome",
+                                                            url: "https://kept.example.com/"),
+                                   start: .now, categoryKey: "browsing", source: .ai)
+        context.insert(kept)
+        service.markReviewed([kept.classificationKey])
+
+        service.reaskSites(filedAs: "browsing")
+        await waitForQueue(service)
+        #expect(ai.calls == 0)
+        #expect(kept.categoryKey == "browsing")
+        #expect(service.reviewedKeys == [kept.classificationKey])
+    }
+
+    @Test func aDifferentAnswerNeedsReviewingAgain() async {
+        let ai = FakeAI(answer: .init(categoryKey: "finance", confidence: .high))
+        context.insert(AIClassificationRecord(key: "com.google.Chrome|broker.example.com", categoryKey: "browsing", confidence: .medium))
+        try? context.save()
+        let service = ClassificationService(modelContext: context, ai: ai)
+        service.markReviewed(["com.google.Chrome|broker.example.com"])
+        // A guess left over from before the answer, which retrying asks the model about again.
+        let site = ActivityContext(bundleID: "com.google.Chrome", appName: "Google Chrome", url: "https://broker.example.com/")
+        context.insert(ActivitySegment(context: site, start: .now, categoryKey: "browsing", source: .guess))
+
+        service.retryPending()
+        await waitForQueue(service)
+        #expect(ai.calls == 1)
+        #expect(service.reviewedKeys.isEmpty)
+        let record = try? context.fetch(FetchDescriptor<AIClassificationRecord>()).first
+        #expect(record?.reviewed == false)
+    }
 }

@@ -262,6 +262,16 @@
         }
       }
     },
+    "%lld app(s)/site(s) used for less than 5 minutes each, %@ in all.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 个应用或网站各用了不到 5 分钟，共 %2$@。"
+          }
+        }
+      }
+    },
     "%lld brief switches · %@": {
       "localizations": {
         "zh-Hans": {
@@ -832,6 +842,16 @@
         }
       }
     },
+    "Every app and site from the last 30 days is covered by a rule or has been reviewed.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "过去 30 天的每个应用和网站都有规则覆盖，或已经审核过。"
+          }
+        }
+      }
+    },
     "First worked on": {
       "localizations": {
         "zh-Hans": {
@@ -1292,16 +1312,6 @@
         }
       }
     },
-    "Confirm %lld High-Confidence": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "确认 %lld 个高置信度结果"
-          }
-        }
-      }
-    },
     "Connected": {
       "localizations": {
         "zh-Hans": {
@@ -1602,16 +1612,6 @@
         }
       }
     },
-    "Every app and site from the last 30 days is covered by a rule.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "过去 30 天的每个应用和网站都有规则覆盖。"
-          }
-        }
-      }
-    },
     "Every tracked entry with app, title, URL and category.": {
       "localizations": {
         "zh-Hans": {
@@ -1852,6 +1852,16 @@
         }
       }
     },
+    "Hide": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏"
+          }
+        }
+      }
+    },
     "History": {
       "localizations": {
         "zh-Hans": {
@@ -1922,12 +1932,12 @@
         }
       }
     },
-    "Keep the model's category for every app and site it was sure about": {
+    "Keep the model's category for every app and site listed, and take them off this list": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "对模型有把握的每个应用和网站，保留它给的类别"
+            "value": "保留模型给列出的每个应用和网站的类别，并将它们移出此列表"
           }
         }
       }
@@ -1992,6 +2002,16 @@
         }
       }
     },
+    "Looks right — keep %@ and take it off this list": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "看起来没问题，保持为%@并移出此列表"
+          }
+        }
+      }
+    },
     "Looks right — keep %@ for this app/site": {
       "localizations": {
         "zh-Hans": {
@@ -2008,6 +2028,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "降低专注分，并在专注时段触发拦截。"
+          }
+        }
+      }
+    },
+    "Mark %lld as Reviewed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将 %lld 项标为已审核"
           }
         }
       }
@@ -2542,6 +2572,16 @@
         }
       }
     },
+    "Only apps and sites used for less than 5 minutes in the last 30 days are left.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只剩下过去 30 天里用了不到 5 分钟的应用和网站。"
+          }
+        }
+      }
+    },
     "Only record the domain of URLs": {
       "localizations": {
         "zh-Hans": {
@@ -3042,6 +3082,16 @@
         }
       }
     },
+    "Show": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示"
+          }
+        }
+      }
+    },
     "Show all %lld entries": {
       "localizations": {
         "zh-Hans": {
@@ -3088,6 +3138,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "收起"
+          }
+        }
+      }
+    },
+    "Show Them": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看这些"
           }
         }
       }
@@ -3588,6 +3648,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "使用其他模型…"
+          }
+        }
+      }
+    },
+    "Used for less than 5 minutes": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用了不到 5 分钟"
           }
         }
       }

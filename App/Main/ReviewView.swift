@@ -3,14 +3,16 @@ import SwiftData
 import SwiftUI
 
 /// Apps and sites no rule knew: still waiting for the model, guessed without one, or
-/// classified by it and not yet confirmed. Confirming or changing one creates a rule, which
-/// takes it off this list.
+/// classified by it and not yet looked at. Keeping the model's answer marks it reviewed;
+/// keeping a guess or changing a category creates a rule. Either takes it off this list.
+/// Apps and sites used only briefly are listed apart and left out of the badge.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.liveness) private var liveness
     @Query private var segments: [ActivitySegment]
     /// Shown unchanged while not live (see `Liveness`).
-    @State private var shown = Memo<[Item]>()
+    @State private var shown = Memo<[ReviewItem]>()
+    @State private var showsBrief = false
 
     init() {
         let since = Calendar.current.date(byAdding: .day, value: -30, to: .now) ?? .now
@@ -23,94 +25,129 @@ struct ReviewView: View {
         })
     }
 
-    private struct Item: Identifiable {
-        var key: String
-        var sample: ActivitySegment
-        var duration: TimeInterval
-        var categoryKey: String
-        var source: ClassificationSource
-        var confidence: AIConfidence?
-        /// The most used window or page titles, so it's clear what the app or site was used for.
-        var titles: [String] = []
-        var id: String { key }
-    }
-
     var body: some View {
-        let items = shown.value(liveness, items)
+        let items = shown.value(liveness) {
+            ReviewList.items(segments, reviewed: model.classifier.reviewedKeys, confidence: model.classifier.confidence(forKey:))
+        }
+        let main = items.filter(\.needsLook)
+        let brief = items.filter { !$0.needsLook }
+        let listed = showsBrief ? main + brief : main
         VStack(spacing: 0) {
             statusBar
             Divider()
             if items.isEmpty {
                 ContentUnavailableView("Nothing to review", systemImage: "checkmark.circle",
-                                       description: Text("Every app and site from the last 30 days is covered by a rule."))
+                                       description: Text("Every app and site from the last 30 days is covered by a rule or has been reviewed."))
                     .frame(maxHeight: .infinity)
+            } else if listed.isEmpty {
+                ContentUnavailableView {
+                    Label("Nothing to review", systemImage: "checkmark.circle")
+                } description: {
+                    Text("Only apps and sites used for less than 5 minutes in the last 30 days are left.")
+                } actions: {
+                    Button("Show Them") { showsBrief = true }
+                }
+                .frame(maxHeight: .infinity)
             } else {
-                Table(items) {
-                    TableColumn("App / Site") { item in
-                        HStack {
-                            Image(nsImage: AppIcons.icon(for: item.sample.bundleID)).resizable().frame(width: 16, height: 16)
-                            VStack(alignment: .leading) {
-                                Text(item.sample.domain ?? item.sample.appName)
-                                if !item.titles.isEmpty {
-                                    Text(item.titles.prefix(2).joined(separator: " · "))
-                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                } else if item.sample.domain != nil {
-                                    Text(item.sample.appName).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .help(item.titles.joined(separator: "\n"))
-                        }
-                    }
-                    TableColumn("Time (30 days)") { item in
-                        Text(Format.duration(item.duration)).monospacedDigit()
-                    }
-                    .width(110)
-                    TableColumn("Status") { item in
-                        switch item.source {
-                        case .pending: Label("Waiting", systemImage: "hourglass").foregroundStyle(.secondary)
-                        case .guess: Label("Guess", systemImage: "questionmark.circle").foregroundStyle(.secondary)
-                        default: Text("AI · \(item.confidence.map { String(localized: String.LocalizationValue($0.rawValue)) } ?? "?") confidence").foregroundStyle(.secondary)
-                        }
-                    }
-                    .width(160)
-                    TableColumn("Category") { item in
-                        Picker("", selection: Binding(
-                            get: { item.categoryKey },
-                            set: { assign(item, to: $0) }
-                        )) {
-                            ForEach(model.classifier.categories) { category in
-                                Text(category.displayName).tag(category.key)
-                            }
-                        }
-                        .labelsHidden()
-                    }
-                    .width(180)
-                    TableColumn("") { item in
-                        Button {
-                            assign(item, to: item.categoryKey)
-                        } label: {
-                            Image(systemName: "checkmark.circle")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(item.source == .pending)
-                        .help("Looks right — keep \(model.classifier.category(item.categoryKey).displayName) for this app/site")
-                    }
-                    .width(30)
+                table(main: main, brief: showsBrief ? brief : [])
+                if !brief.isEmpty {
+                    Divider()
+                    briefBar(brief)
                 }
             }
         }
         .navigationTitle("Review")
         .toolbar {
-            let confident = items.filter { $0.source == .ai && $0.confidence == .high }
+            let answered = listed.filter { $0.source == .ai }
             Button {
-                for item in confident { assign(item, to: item.categoryKey) }
+                model.classifier.markReviewed(answered.map(\.key))
             } label: {
-                Label("Confirm \(confident.count) High-Confidence", systemImage: "checkmark.circle")
+                Label("Mark \(answered.count) as Reviewed", systemImage: "checkmark.circle")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(confident.isEmpty)
-            .help("Keep the model's category for every app and site it was sure about")
+            .disabled(answered.isEmpty)
+            .help("Keep the model's category for every app and site listed, and take them off this list")
         }
+    }
+
+    private func table(main: [ReviewItem], brief: [ReviewItem]) -> some View {
+        Table(of: ReviewItem.self) {
+            TableColumn("App / Site") { item in
+                HStack {
+                    Image(nsImage: AppIcons.icon(for: item.bundleID)).resizable().frame(width: 16, height: 16)
+                    VStack(alignment: .leading) {
+                        Text(item.domain ?? item.appName)
+                        if !item.titles.isEmpty {
+                            Text(item.titles.prefix(2).joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        } else if item.domain != nil {
+                            Text(item.appName).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .help(item.titles.joined(separator: "\n"))
+                }
+            }
+            TableColumn("Time (30 days)") { item in
+                Text(Format.duration(item.duration)).monospacedDigit()
+            }
+            .width(110)
+            TableColumn("Status") { item in
+                switch item.source {
+                case .pending: Label("Waiting", systemImage: "hourglass").foregroundStyle(.secondary)
+                case .guess: Label("Guess", systemImage: "questionmark.circle").foregroundStyle(.secondary)
+                default: Text("AI · \(item.confidence.map { String(localized: String.LocalizationValue($0.rawValue)) } ?? "?") confidence").foregroundStyle(.secondary)
+                }
+            }
+            .width(160)
+            TableColumn("Category") { item in
+                Picker("", selection: Binding(
+                    get: { item.categoryKey },
+                    set: { assign(item, to: $0) }
+                )) {
+                    ForEach(model.classifier.categories) { category in
+                        Text(category.displayName).tag(category.key)
+                    }
+                }
+                .labelsHidden()
+            }
+            .width(180)
+            TableColumn("") { item in
+                let category = model.classifier.category(item.categoryKey).displayName
+                Button {
+                    if item.source == .ai {
+                        model.classifier.markReviewed([item.key])
+                    } else {
+                        assign(item, to: item.categoryKey)
+                    }
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(item.source == .pending)
+                .help(item.source == .ai ? "Looks right — keep \(category) and take it off this list"
+                                         : "Looks right — keep \(category) for this app/site")
+            }
+            .width(30)
+        } rows: {
+            ForEach(main) { TableRow($0) }
+            if !brief.isEmpty {
+                Section("Used for less than 5 minutes") {
+                    ForEach(brief) { TableRow($0) }
+                }
+            }
+        }
+    }
+
+    private func briefBar(_ brief: [ReviewItem]) -> some View {
+        HStack {
+            Text("\(brief.count) app(s)/site(s) used for less than 5 minutes each, \(Format.duration(brief.reduce(0) { $0 + $1.duration })) in all.")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button(showsBrief ? "Hide" : "Show") { showsBrief.toggle() }
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var statusBar: some View {
@@ -136,43 +173,11 @@ struct ReviewView: View {
         .padding(12)
     }
 
-    private func items() -> [Item] {
-        var byKey: [String: Item] = [:]
-        var titles: [String: [(title: String?, duration: TimeInterval)]] = [:]
-        for segment in segments {
-            let key = segment.classificationKey
-            titles[key, default: []].append((segment.title, segment.duration))
-            if var item = byKey[key] {
-                item.duration += segment.duration
-                byKey[key] = item
-            } else {
-                byKey[key] = Item(key: key, sample: segment, duration: segment.duration, categoryKey: segment.categoryKey,
-                                  source: segment.classificationSource, confidence: model.classifier.confidence(forKey: key))
-            }
-        }
-        for (key, samples) in titles {
-            guard let appName = byKey[key]?.sample.appName else { continue }
-            byKey[key]?.titles = TitleSummary.mostUsed(samples, appName: appName, limit: 3)
-        }
-        // Waiting first, then least confident, then most time spent.
-        func rank(_ item: Item) -> Int {
-            switch (item.source, item.confidence) {
-            case (.pending, _): 0
-            case (_, .low?), (_, nil): 1
-            case (_, .medium?): 2
-            case (_, .high?): 3
-            }
-        }
-        return byKey.values.sorted { a, b in
-            rank(a) != rank(b) ? rank(a) < rank(b) : a.duration > b.duration
-        }
-    }
-
-    private func assign(_ item: Item, to categoryKey: String) {
-        if let domain = item.sample.domain {
+    private func assign(_ item: ReviewItem, to categoryKey: String) {
+        if let domain = item.domain {
             model.classifier.addRule(field: .domain, pattern: domain, categoryKey: categoryKey)
         } else {
-            model.classifier.addRule(field: .bundleID, pattern: item.sample.bundleID, categoryKey: categoryKey)
+            model.classifier.addRule(field: .bundleID, pattern: item.bundleID, categoryKey: categoryKey)
         }
     }
 }
