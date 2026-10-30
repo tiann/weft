@@ -14,8 +14,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "4"
 
 packages:
   WeftKit:
