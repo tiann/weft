@@ -59,6 +59,12 @@ private struct GeneralSettings: View {
                 }
                 Toggle("Notify when I reach the target and when I'm overworking", isOn: $prefs.workHoursNotifications)
                 if prefs.workHoursNotifications { NotificationsOffNote() }
+                Picker("Daily focus goal", selection: $prefs.focusGoalHours) {
+                    ForEach([1.0, 2, 3, 4, 5, 6, 8], id: \.self) { hours in
+                        Text(Format.duration(hours * 3600)).tag(hours)
+                    }
+                }
+                .help("Focus time that earns all of the Focus Score's 50 focus-time points.")
             }
             Section("Permissions") {
                 PermissionRow(

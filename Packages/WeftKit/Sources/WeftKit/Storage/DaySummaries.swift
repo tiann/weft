@@ -42,7 +42,7 @@ public final class DaySummaries {
         let flags = categories.values.sorted { $0.key < $1.key }.map { category in
             "\(category.key):\(category.isFocusTime ? 1 : 0)\(category.isMeeting ? 1 : 0)\(category.isDistracting ? 1 : 0)"
         }
-        return "1|\(calendar.timeZone.identifier)|" + flags.joined(separator: ",")
+        return "2|\(calendar.timeZone.identifier)|" + flags.joined(separator: ",")
     }
 
     /// The rollups of `days` that are ready, by start. The day going on at `now` is worked out

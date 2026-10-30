@@ -109,7 +109,7 @@ private struct DayContent: View {
         let samples = previous.map(SegmentSample.init)
         let waiting = model.waiting(user: samples, agents: model.agentSamples(previousAgentSpans))
         return PeriodSummary(DayMetrics.daily(samples, waiting: waiting, days: days,
-                                              categories: model.classifier.categoryLookup))
+                                              categories: model.classifier.categoryLookup, config: model.scoreConfig))
     }
 
     /// What the page shows, worked out from the store.
@@ -147,7 +147,8 @@ private struct DayContent: View {
         let streams = TimeEntries.build(segments)
         let agentWork = agents.compactMap { $0.clipped(to: span) }
         return Page(segments: segments, samples: samples,
-                    metrics: DayMetrics.compute(samples, waiting: waiting, categories: model.classifier.categoryLookup),
+                    metrics: DayMetrics.compute(samples, waiting: waiting, categories: model.classifier.categoryLookup,
+                                                config: model.scoreConfig),
                     streams: streams, entries: TimeEntries.significant(streams),
                     agentWork: agentWork, agentSummary: AgentDaySummary(agentWork), agentBlocks: AgentBlocks.build(agentWork),
                     agentSessions: Dictionary(agentSessions.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first }),
@@ -249,11 +250,11 @@ private struct Overview: View {
     var body: some View {
         HStack(alignment: .center, spacing: 28) {
             Button { showScoreDetails = true } label: {
-                ScoreRing(score: metrics.score, activeTime: metrics.activeTime, size: 112)
+                ScoreRing(score: metrics.score, inProgress: isToday, size: 112)
             }
             .buttonStyle(.plain)
             .help("How the Focus Score works")
-            .popover(isPresented: $showScoreDetails) { ScoreExplanation(score: metrics.score).padding() }
+            .popover(isPresented: $showScoreDetails) { ScoreExplanation(metrics: metrics).padding() }
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -378,26 +379,54 @@ private struct Fact: View {
     }
 }
 
+/// Where the Focus Score's points came from, part by part.
 private struct ScoreExplanation: View {
-    let score: FocusScore?
+    let metrics: DayMetrics
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("How the Focus Score works").font(.headline)
-            Text("100 × (½ deep-work share + ½ focus share) − switching penalty − distraction penalty. Meetings are left out. Moving between focus apps, like the terminal and the docs in your browser, isn't a switch, and neither is a glance under 30 seconds. A detour of up to 3 minutes doesn't end a deep-work stretch, as long as three quarters of the stretch is focus work.")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let score {
-                Divider()
-                LabeledContent("Focus share", value: Format.percent(score.focusRatio))
-                LabeledContent("Deep-work share (≥ 25 min stretches)", value: Format.percent(score.deepWorkRatio))
-                LabeledContent("Switching penalty", value: String(format: "−%.0f", score.switchPenalty))
-                LabeledContent("Distraction penalty", value: String(format: "−%.0f", score.distractionPenalty))
+        VStack(alignment: .leading, spacing: 14) {
+            if let score = metrics.score {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Focus Score").font(.headline)
+                    Spacer()
+                    Text(verbatim: "\(score.value) · \(score.label)").font(.headline).monospacedDigit()
+                }
+                ScorePartRow(title: "Focus time", part: score.focusTime,
+                             value: String(localized: "\(Format.duration(metrics.focusTime)) of your \(Format.duration(score.focusGoal)) goal"),
+                             rule: "All 50 points at your daily focus goal, which you can change in Settings → General.")
+                ScorePartRow(title: "Continuity", part: score.continuity,
+                             value: String(localized: "\(Format.percent(score.sustainedRatio)) of focus time sustained"),
+                             rule: "Stretches of 25 minutes or more count fully, shorter ones in part. A detour of up to 3 minutes or a break of up to 10 doesn't end a stretch, as long as three quarters of it is focus work.")
+                ScorePartRow(title: "Distraction", part: score.distraction,
+                             value: String(localized: "\(Format.duration(metrics.distractingTime)), \(Format.percent(score.distractionRatio)) of work time"),
+                             rule: "Under 2% of work time costs nothing, and by 12% all 20 points are gone. Meetings aren't counted as work time.")
             } else {
-                Text("Needs at least 15 minutes of tracked time.").font(.callout)
+                Text("Focus Score").font(.headline)
+                Text("Needs at least 15 minutes of tracked time.").font(.callout).foregroundStyle(.secondary)
             }
         }
         .frame(width: 340)
+    }
+}
+
+private struct ScorePartRow: View {
+    let title: LocalizedStringKey
+    let part: FocusScore.Part
+    let value: String
+    let rule: LocalizedStringKey
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.callout.weight(.medium))
+                Spacer()
+                Text(verbatim: "\(part.points)/\(part.maximum)").font(.callout).monospacedDigit()
+            }
+            ProgressView(value: part.fraction)
+                .tint(part.fraction > 0.8 ? .green : part.fraction > 0.6 ? .orange : .indigo)
+            Text(value).font(.callout)
+            Text(rule).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -480,7 +509,7 @@ private struct DailyReview: View {
             Focus time: \(Format.duration(metrics.focusTime)); deep work (25+ minute stretches): \(Format.duration(metrics.deepWorkTime)); longest focus stretch: \(Format.duration(metrics.longestFocusStretch))
             Meetings: \(Format.duration(metrics.meetingTime)); distracting: \(Format.duration(metrics.distractingTime))
             Context switches: \(metrics.contextSwitches) (\(String(format: "%.0f", metrics.switchesPerHour)) per hour)
-            Focus Score: \(metrics.score.map { "\($0.value)/100 (\($0.englishLabel))" } ?? "n/a")
+            Focus Score: \(metrics.score.map { "\($0.value)/100 (\($0.englishLabel)): focus time \($0.focusTime.points)/50 against a \(Format.duration($0.focusGoal)) goal, continuity \($0.continuity.points)/30, distraction \($0.distraction.points)/20" } ?? "n/a")
             Top categories: \(categories.joined(separator: ", "))
             Top apps: \(apps.joined(separator: ", "))
             Top sites: \(sites.joined(separator: ", "))

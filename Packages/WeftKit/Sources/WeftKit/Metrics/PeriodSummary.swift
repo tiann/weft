@@ -32,8 +32,12 @@ public struct PeriodSummary: Sendable {
     public var total = DayMetrics()
     /// Days with any tracked time.
     public var activeDays = 0
-    /// Mean Focus Score of the days that have one.
+    /// Mean Focus Score of the days with enough focus work to say something about it: at
+    /// least `averagedFocusShare` of the focus goal. A day off with a few minutes at the Mac
+    /// would only drag it down.
     public var averageScore: Int?
+
+    public static let averagedFocusShare = 0.25
 
     public init(_ days: [DayMetrics]) {
         var scores: [Int] = []
@@ -42,6 +46,7 @@ public struct PeriodSummary: Sendable {
             total.activeTime += day.activeTime
             total.focusTime += day.focusTime
             total.deepWorkTime += day.deepWorkTime
+            total.sustainedFocusTime += day.sustainedFocusTime
             total.meetingTime += day.meetingTime
             total.distractingTime += day.distractingTime
             total.agentWaitingIdle += day.agentWaitingIdle
@@ -52,7 +57,9 @@ public struct PeriodSummary: Sendable {
             for (key, value) in day.byApp { total.byApp[key, default: 0] += value }
             for (key, value) in day.byDomain { total.byDomain[key, default: 0] += value }
             for (key, value) in day.byHour { total.byHour[key, default: 0] += value }
-            if let score = day.score { scores.append(score.value) }
+            if let score = day.score, day.focusTime >= score.focusGoal * Self.averagedFocusShare {
+                scores.append(score.value)
+            }
         }
         if !scores.isEmpty {
             averageScore = Int((Double(scores.reduce(0, +)) / Double(scores.count)).rounded())

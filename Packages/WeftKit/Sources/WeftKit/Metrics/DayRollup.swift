@@ -27,16 +27,19 @@ public struct DayRollup: Sendable, Codable, Equatable {
             .map { DateInterval(start: $0.start, end: $0.end) })
     }
 
-    /// Each day's metrics, with the time spent waiting on `agents` added. Include the day before
-    /// the first one wanted, so waiting just after midnight is seen. Nil `waiting` leaves it out.
+    /// Each day's metrics, scored with `score` and with the time spent waiting on `agents`
+    /// added. Include the day before the first one wanted, so waiting just after midnight is
+    /// seen. Nil `waiting` leaves it out. A rollup is scored with the default focus goal when
+    /// it's added up, so the goal can change without adding up every day again.
     public static func daily(_ days: [(day: DateInterval, rollup: DayRollup)], agents: [AgentSample],
-                             waiting config: AgentWaitingConfig?) -> [DayMetrics] {
-        guard let config, !agents.isEmpty else { return days.map(\.rollup.metrics) }
+                             waiting config: AgentWaitingConfig?, score: FocusScoreConfig = FocusScoreConfig()) -> [DayMetrics] {
+        let scored = days.map { (day: $0.day, metrics: $0.rollup.metrics.rescored(score)) }
+        guard let config, !agents.isEmpty else { return scored.map(\.metrics) }
         let waiting = AgentMetrics.waiting(present: AgentMetrics.union(days.flatMap(\.rollup.present)),
                                            distracting: AgentMetrics.union(days.flatMap(\.rollup.distracting)),
                                            agents: agents, config: config)
-        return days.map { day, rollup in
-            var metrics = rollup.metrics
+        return scored.map { day, metrics in
+            var metrics = metrics
             for interval in waiting.compactMap({ $0.clipped(to: day) }) {
                 switch interval.kind {
                 case .idle: metrics.agentWaitingIdle += interval.interval.duration

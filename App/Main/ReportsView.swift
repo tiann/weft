@@ -134,8 +134,6 @@ private struct ReportContent: View {
         var summary: PeriodSummary
         /// Nil when there's nothing to compare with.
         var last: PeriodSummary?
-        /// Short days aren't graded yet, as on the score ring.
-        var isEarly: Bool
         var bars: [StackedBarChart.Bar]
         var keys: [String]
         var scores: [(start: Date, score: Int?)]
@@ -227,7 +225,14 @@ private struct ReportContent: View {
         let rollups = model.daySummaries.rollups(for: wanted, categories: model.classifier.categoryLookup, now: now)
         let ready = wanted.compactMap { day in rollups[day.start].map { (day: day, rollup: $0) } }
         let starts = ready.map(\.day.start)
-        let daily: [(start: Date, metrics: DayMetrics)] = Array(zip(starts, DayRollup.daily(ready, agents: agents, waiting: model.waitingConfig)))
+        let today = calendar.startOfDay(for: now)
+        let daily: [(start: Date, metrics: DayMetrics)] = zip(starts, DayRollup.daily(ready, agents: agents, waiting: model.waitingConfig,
+                                                                                      score: model.scoreConfig)).map { start, metrics in
+            // Today's score only goes up until the focus goal is met, so it isn't averaged before then.
+            var metrics = metrics
+            if start == today, (metrics.score?.focusTime.fraction ?? 0) < 1 { metrics.score = nil }
+            return (start, metrics)
+        }
         func days(in interval: DateInterval) -> [DayMetrics] {
             daily.filter { $0.start >= interval.start && $0.start < interval.end }.map(\.metrics)
         }
@@ -254,9 +259,8 @@ private struct ReportContent: View {
             bars += keys.compactMap { key in stacked[key].map { StackedBarChart.Bar(start: bucket.start, key: key, value: $0) } }
             scores.append((bucket.start, total.averageScore))
         }
-        let isEarly = current.allSatisfy { $0.score == nil || $0.activeTime < 2 * 3600 }
         let pending = wanted.count - ready.count
-        return You(summary: summary, last: last, isEarly: isEarly, bars: bars, keys: keys, scores: scores, pending: pending)
+        return You(summary: summary, last: last, bars: bars, keys: keys, scores: scores, pending: pending)
     }
 
     var body: some View {
@@ -376,7 +380,7 @@ private struct ReportContent: View {
                                  ChangeLabel(change: Change(Double(now), baseline: Double($0)), unit: .points, help: period.comparison)
                              }
                          },
-                         detail: average.map { you.isEarly ? String(localized: "Early estimate") : FocusScore.label(for: $0) }
+                         detail: average.map { FocusScore.label(for: $0) }
                             ?? String(localized: "No score yet"))
             }
             Card("Time by category") {

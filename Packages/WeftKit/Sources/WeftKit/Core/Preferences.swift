@@ -42,6 +42,8 @@ public final class Preferences {
     public var breakReminderMinutes: Int { didSet { save(breakReminderMinutes, "breakReminderMinutes") } }
     public var snoozeMinutes: Int { didSet { save(snoozeMinutes, "snoozeMinutes") } }
     public var workHoursTarget: Double { didSet { save(workHoursTarget, "workHoursTarget") } }
+    /// Hours of focus work a day that earn all the Focus Score's focus-time points.
+    public var focusGoalHours: Double { didSet { save(focusGoalHours, "focusGoalHours") } }
     public var workHoursNotifications: Bool { didSet { save(workHoursNotifications, "workHoursNotifications") } }
     /// When the target and overtime notifications last went out, so relaunching Weft neither
     /// repeats nor skips them.
@@ -93,6 +95,7 @@ public final class Preferences {
             "breakReminderMinutes": 60,
             "snoozeMinutes": 10,
             "workHoursTarget": 8.0,
+            "focusGoalHours": 4.0,
             "workHoursNotifications": true,
             "blockerEnabled": true,
             "blockerStyle": BlockerStyle.overlay.rawValue,
@@ -123,6 +126,7 @@ public final class Preferences {
         breakReminderMinutes = defaults.integer(forKey: "breakReminderMinutes")
         snoozeMinutes = defaults.integer(forKey: "snoozeMinutes")
         workHoursTarget = defaults.double(forKey: "workHoursTarget")
+        focusGoalHours = defaults.double(forKey: "focusGoalHours")
         workHoursNotifications = defaults.bool(forKey: "workHoursNotifications")
         workHoursTargetNotifiedAt = defaults.object(forKey: "workHoursTargetNotifiedAt") as? Date
         overtimeNotifiedAt = defaults.object(forKey: "overtimeNotifiedAt") as? Date

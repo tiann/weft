@@ -190,7 +190,7 @@
     const fact = (symbol, title, value, detail) =>
       `<div class="m-fact">${icon(symbol)}<div><span>${title}</span><b>${value}</b><small>${detail}</small></div></div>`;
     return `<section class="m-overview">
-      ${ring(84, 100, 'Good', color.green)}
+      ${ring(84, 100, 'High', color.green)}
       <div class="m-ov-main">
         <div class="m-tracked"><b>${duration(tracked)}</b><span>tracked of ${duration(day.target)}</span></div>
         ${goalBar()}
@@ -258,7 +258,7 @@
       <div class="m-pop-today">
         <div><span class="m-caption">Wednesday</span><b class="m-pop-big">${duration(tracked)}</b>
           <span class="m-caption">of ${duration(day.target)} · ${Math.round((tracked / day.target) * 100)}%</span></div>
-        ${ring(84, 56, 'Good', color.green)}
+        ${ring(84, 56, 'High', color.green)}
       </div>
       ${goalBar()}
       <div class="m-legend compact">${legend(['Focus', 'Meetings', 'Waiting on agents', 'Distracted'], false)}</div>

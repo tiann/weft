@@ -265,6 +265,13 @@ extension AppModel {
         preferences.agentTrackingEnabled ? agents.samples(spans, now: now) : []
     }
 
+    /// How the Focus Score is worked out, with the user's focus goal.
+    var scoreConfig: FocusScoreConfig {
+        var config = FocusScoreConfig()
+        config.focusGoal = preferences.focusGoalHours * 3600
+        return config
+    }
+
     /// How waiting on agents is counted, or nil if it isn't.
     var waitingConfig: AgentWaitingConfig? {
         preferences.countAgentWaiting ? AgentWaitingConfig(idleCap: TimeInterval(preferences.agentWaitingCapMinutes * 60)) : nil

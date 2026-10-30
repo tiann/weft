@@ -29,7 +29,7 @@ struct LocalizationTests {
             .appending(path: "Sources/WeftKit/Localizable.xcstrings")
         let catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: url))
         let keys = CategoryDefinition.defaults.flatMap { [$0.name, $0.hint] }.filter { !$0.isEmpty }
-            + [97, 94, 90, 80, 65, 50, 25, 1, 0].map(FocusScore.englishLabel(for:))
+            + [100, 96, 95, 81, 80, 61, 60, 41, 40, 0].map(FocusScore.englishLabel(for:))
         for key in keys {
             #expect(catalog.strings[key]?.localizations?["zh-Hans"]?.stringUnit.value.isEmpty == false, "\(key)")
         }

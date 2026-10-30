@@ -118,13 +118,16 @@ public final class SessionEngine {
         var summary = SessionSummary(kind: session.kind, start: session.start, end: end, completed: completed,
                                      distractions: distractions)
         if session.kind != .breakTime {
-            let metrics = metrics(from: session.start, to: end)
+            let metrics = metrics(from: session.start, to: end, planned: session.plannedDuration)
             if metrics.activeTime > 0 {
                 summary.focusPercent = metrics.focusTime / metrics.activeTime
                 record.focusPercent = summary.focusPercent
             }
-            summary.score = metrics.score
-            record.focusScore = metrics.score?.value
+            // Focus time is what a meeting leaves no room for, so only focus sessions are scored.
+            if session.kind == .focus {
+                summary.score = metrics.score
+                record.focusScore = metrics.score?.value
+            }
         }
         modelContext.insert(record)
         try? modelContext.save()
@@ -134,7 +137,7 @@ public final class SessionEngine {
         onEnd?(summary)
     }
 
-    private func metrics(from start: Date, to end: Date) -> DayMetrics {
+    private func metrics(from start: Date, to end: Date, planned: TimeInterval) -> DayMetrics {
         let segments = (try? modelContext.fetch(FetchDescriptor<ActivitySegment>(
             predicate: #Predicate { $0.end > start && $0.start < end }
         ))) ?? []
@@ -144,8 +147,10 @@ public final class SessionEngine {
             sample.end = min(sample.end, end)
             return sample
         }
-        // A session is short, so require less data than a full day before scoring.
+        // A session is short, so require less data than a full day before scoring, and its
+        // goal is the focus time planned for it.
         var config = FocusScoreConfig()
+        config.focusGoal = planned
         config.minimumActiveTime = 5 * 60
         config.deepWorkMinimum = min(config.deepWorkMinimum, end.timeIntervalSince(start) * 0.8)
         return DayMetrics.compute(samples, categories: classifier.categoryLookup, config: config)

@@ -82,6 +82,26 @@
         }
       }
     },
+    "%@ of focus time sustained": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的专注时间是持续专注"
+          }
+        }
+      }
+    },
+    "%@ of your %@ goal": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ / 目标 %2$@"
+          }
+        }
+      }
+    },
     "%@ Until a model is available, Weft guesses from each app's App Store category and each site's name.": {
       "localizations": {
         "zh-Hans": {
@@ -238,6 +258,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@ – %2$@ · 活跃 %3$@"
+          }
+        }
+      }
+    },
+    "%@, %@ of work time": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@，占工作时间的 %2$@"
           }
         }
       }
@@ -602,16 +632,6 @@
         }
       }
     },
-    "100 × (½ deep-work share + ½ focus share) − switching penalty − distraction penalty. Meetings are left out. Moving between focus apps, like the terminal and the docs in your browser, isn't a switch, and neither is a glance under 30 seconds. A detour of up to 3 minutes doesn't end a deep-work stretch, as long as three quarters of the stretch is focus work.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "100 ×（½ 深度工作占比 + ½ 专注占比）− 切换扣分 − 分心扣分。会议不计入。在专注类应用之间切换（比如终端和浏览器里的文档）不算切换，30 秒以内的短暂查看也不算。只要一段时间里有四分之三是专注工作，3 分钟以内的岔开不会打断深度工作。"
-          }
-        }
-      }
-    },
     "A guess made without a model; choose the right category to fix it": {
       "localizations": {
         "zh-Hans": {
@@ -638,6 +658,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "AI · 置信度%@"
+          }
+        }
+      }
+    },
+    "All 50 points at your daily focus goal, which you can change in Settings → General.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "达到每日专注目标即得满 50 分，可以在“设置 → 通用”里修改目标。"
           }
         }
       }
@@ -832,12 +862,42 @@
         }
       }
     },
+    "Continuity": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连续性"
+          }
+        }
+      }
+    },
+    "Daily focus goal": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每日专注目标"
+          }
+        }
+      }
+    },
     "Date": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "日期"
+          }
+        }
+      }
+    },
+    "Distraction": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分心"
           }
         }
       }
@@ -858,6 +918,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "首次工作"
+          }
+        }
+      }
+    },
+    "Focus time": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专注时长"
+          }
+        }
+      }
+    },
+    "Focus time that earns all of the Focus Score's 50 focus-time points.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "达到这个专注时长，专注分里的“专注时长”一项即得满 50 分。"
           }
         }
       }
@@ -1452,16 +1532,6 @@
         }
       }
     },
-    "Deep-work share (≥ 25 min stretches)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度工作占比（连续 ≥ 25 分钟）"
-          }
-        }
-      }
-    },
     "Default durations": {
       "localizations": {
         "zh-Hans": {
@@ -1522,16 +1592,6 @@
         }
       }
     },
-    "Distraction penalty": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "分心扣分"
-          }
-        }
-      }
-    },
     "Domain": {
       "localizations": {
         "zh-Hans": {
@@ -1578,16 +1638,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "每个浏览器会请求一次权限。"
-          }
-        }
-      }
-    },
-    "Early estimate": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "初步估计"
           }
         }
       }
@@ -1718,16 +1768,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "专注分"
-          }
-        }
-      }
-    },
-    "Focus share": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "专注占比"
           }
         }
       }
@@ -3192,6 +3232,16 @@
         }
       }
     },
+    "So far": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到目前为止"
+          }
+        }
+      }
+    },
     "Some switching": {
       "localizations": {
         "zh-Hans": {
@@ -3282,6 +3332,16 @@
         }
       }
     },
+    "Stretches of 25 minutes or more count fully, shorter ones in part. A detour of up to 3 minutes or a break of up to 10 doesn't end a stretch, as long as three quarters of it is focus work.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连续 25 分钟以上的专注全部计入，更短的按比例计入。只要一段时间里有四分之三是专注工作，3 分钟以内的岔开或 10 分钟以内的离开都不会打断它。"
+          }
+        }
+      }
+    },
     "Style": {
       "localizations": {
         "zh-Hans": {
@@ -3298,16 +3358,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "切换"
-          }
-        }
-      }
-    },
-    "Switching penalty": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切换扣分"
           }
         }
       }
@@ -3608,6 +3658,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "在“设置 → 智能体”中打开“显示编程智能体为我工作的时间”，即可查看它们做了什么。"
+          }
+        }
+      }
+    },
+    "Under 2% of work time costs nothing, and by 12% all 20 points are gone. Meetings aren't counted as work time.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分心不超过工作时间的 2% 不扣分，到 12% 时 20 分全部扣完。会议不算工作时间。"
           }
         }
       }

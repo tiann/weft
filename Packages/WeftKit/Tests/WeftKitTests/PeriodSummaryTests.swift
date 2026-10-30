@@ -42,10 +42,27 @@ struct PeriodSummaryTests {
     }
 
     @Test func averageScoreSkipsUnscoredDays() {
-        let days = DayMetrics.daily([sample(0, 120, "code"), sample(86400 / 60, 5, "code")],
+        let days = DayMetrics.daily([sample(0, 240, "code"), sample(86400 / 60, 5, "code")],
                                     days: [day(0), day(1)], categories: categories)
         #expect(days[1].score == nil)
         #expect(PeriodSummary(days).averageScore == 100)
+    }
+
+    @Test func averageScoreSkipsDaysWithLittleFocus() {
+        // A day off with three quarters of an hour of focus work and some browsing has a
+        // score, but it says nothing about focus.
+        let days = DayMetrics.daily([sample(0, 240, "code"), sample(1440, 45, "code"), sample(1485, 60, "browsing")],
+                                    days: [day(0), day(1)], categories: categories)
+        #expect(days[1].score != nil)
+        #expect(PeriodSummary(days).averageScore == 100)
+
+        var config = FocusScoreConfig()
+        config.focusGoal = 3 * 3600
+        let lowerGoal = DayMetrics.daily([sample(0, 240, "code"), sample(1440, 45, "code"), sample(1485, 60, "browsing")],
+                                         days: [day(0), day(1)], categories: categories, config: config)
+        // With a three-hour goal, three quarters of an hour is enough to count: 13 + 30 + 20.
+        #expect(lowerGoal[1].score?.value == 63)
+        #expect(PeriodSummary(lowerGoal).averageScore == 82)
     }
 
     @Test func emptySummaryHasNoAverages() {

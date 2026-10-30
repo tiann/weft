@@ -89,7 +89,8 @@ private struct TodayCard: View {
         let span = DateInterval(start: day, end: max(day, .now))
         let waiting = model.waiting(user: segments.map(SegmentSample.init), agents: model.agentSamples(agentSpans))
             .compactMap { $0.clipped(to: span) }
-        let metrics = DayMetrics.compute(samples, waiting: waiting, categories: model.classifier.categoryLookup)
+        let metrics = DayMetrics.compute(samples, waiting: waiting, categories: model.classifier.categoryLookup,
+                                         config: model.scoreConfig)
         let target = model.preferences.workHoursTarget * 3600
 
         VStack(alignment: .leading, spacing: 10) {
@@ -104,7 +105,7 @@ private struct TodayCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                ScoreRing(score: metrics.score, activeTime: metrics.activeTime)
+                ScoreRing(score: metrics.score, inProgress: true)
             }
             GoalBar(metrics: metrics, target: target)
             legend(metrics)
@@ -130,7 +131,9 @@ private struct TodayCard: View {
 /// is judged until there's enough data.
 struct ScoreRing: View {
     let score: FocusScore?
-    var activeTime: TimeInterval = .infinity
+    /// For today: the score only goes up as focus time adds up, so it isn't judged until the
+    /// focus goal is met.
+    var inProgress = false
     var size: CGFloat = 56
 
     var body: some View {
@@ -153,17 +156,16 @@ struct ScoreRing: View {
         .help("Focus Score")
     }
 
-    /// A couple of hours in, a score still swings a lot; don't grade it yet.
-    private var isEarly: Bool { activeTime < 2 * 3600 }
+    private var isSoFar: Bool { inProgress && (score?.focusTime.fraction ?? 0) < 1 }
 
     private var caption: String {
         guard let score else { return String(localized: "Collecting data") }
-        return isEarly ? String(localized: "Early estimate") : score.label
+        return isSoFar ? String(localized: "So far") : score.label
     }
 
     private var color: Color {
-        guard let value = score?.value, !isEarly else { return .secondary }
-        return value >= 80 ? .green : value >= 50 ? .orange : .indigo
+        guard let value = score?.value, !isSoFar else { return .secondary }
+        return value > 80 ? .green : value > 60 ? .orange : .indigo
     }
 }
 
@@ -416,7 +418,7 @@ struct SessionSummaryCard: View {
                     .buttonStyle(.borderless)
             }
             HStack(spacing: 16) {
-                ScoreRing(score: summary.score, size: 40)
+                if summary.kind == .focus { ScoreRing(score: summary.score, size: 40) }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Focused \(summary.focusPercent.map(Format.percent) ?? "–") of the time")
                     Text(summary.distractions == 0 ? String(localized: "No distractions") : summary.distractions == 1 ? String(localized: "1 distraction") : String(localized: "\(summary.distractions) distractions"))
