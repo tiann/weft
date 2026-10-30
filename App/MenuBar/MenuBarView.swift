@@ -6,6 +6,10 @@ struct MenuBarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    /// Closes the popover. It closes by itself on a click elsewhere, but not when one of its
+    /// buttons brings up another window. Closing its window directly would leave the menu bar
+    /// item thinking it's open, so the next click on it would only close it.
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -48,6 +52,7 @@ struct MenuBarView: View {
                 model.showDay()
                 openWindow(id: MainView.windowID)
                 NSApp.activate()
+                dismiss()
             }
             Button(action: showSettings) { Image(systemName: "gearshape") }
                 .help("Settings")
@@ -60,6 +65,7 @@ struct MenuBarView: View {
     private func showSettings() {
         openSettings()
         NSApp.activate()
+        dismiss()
     }
 }
 
