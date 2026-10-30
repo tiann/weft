@@ -131,19 +131,28 @@ private struct TodayCard: View {
 /// is judged until there's enough data.
 struct ScoreRing: View {
     let score: FocusScore?
-    /// For today: the score only goes up as focus time adds up, so it isn't judged until the
-    /// focus goal is met.
+    /// For today: the score only goes up as focus time adds up, so until the focus goal is met
+    /// it isn't judged. The ring is drawn open instead, in the focus color, with a dashed track
+    /// for the part still to come.
     var inProgress = false
     var size: CGFloat = 56
 
     var body: some View {
+        let width = size * 0.11
         VStack(spacing: 3) {
             ZStack {
-                Circle().stroke(.quaternary, lineWidth: size * 0.11)
+                // Inset so the stroke stays inside the frame, clear of the caption.
+                let circle = Circle().inset(by: width / 2)
+                if isSoFar {
+                    circle.stroke(.quaternary, style: StrokeStyle(lineWidth: width * 0.55, lineCap: .round,
+                                                                    dash: [width * 0.25, width * 0.75]))
+                } else {
+                    circle.stroke(.quaternary, lineWidth: width)
+                }
                 if let score {
-                    Circle()
+                    circle
                         .trim(from: 0, to: CGFloat(score.value) / 100)
-                        .stroke(color, style: StrokeStyle(lineWidth: size * 0.11, lineCap: .round))
+                        .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
                 Text(score.map { "\($0.value)" } ?? "–")
@@ -164,7 +173,8 @@ struct ScoreRing: View {
     }
 
     private var color: Color {
-        guard let value = score?.value, !isSoFar else { return .secondary }
+        guard let value = score?.value else { return .secondary }
+        if isSoFar { return GoalBar.focusColor }
         return value > 80 ? .green : value > 60 ? .orange : .indigo
     }
 }
